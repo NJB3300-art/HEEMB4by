@@ -3,7 +3,7 @@
 
 **Heemb4by** is a browser app for drawing 2D animation inside 3D scenes.
 
-**Open it:** https://njb3300-art.github.io/heemb4by/
+**Open it:** https://njb3300-art.github.io/HEEMB4by/
 
 ## What it does
 - Draw with 65 brushes (pencils, inks, markers, airbrush, textures, stamps and more), with layers, an eraser, fill and an eyedropper.
