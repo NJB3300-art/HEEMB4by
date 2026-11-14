@@ -817,6 +817,9 @@ body.bg-off .upd-frame:disabled { opacity: 0.75; }
 .list li { gap: 4px; }
 .list li .mini { width: 27px; height: 27px; }
 .list .nm small { display: block; margin: 1px 0 0; font-size: 11px; }
+/* timeline open: keep the frame buttons clear of the Timeline tab */
+@media (min-height: 501px) { .app.time-open .hud.bc { bottom: 288px; } }
+@media (min-height: 501px) and (max-width: 900px) { .app.time-open .hud.bc { bottom: 256px; } }
 </style>
 </head>
 <body>
