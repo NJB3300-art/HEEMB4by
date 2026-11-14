@@ -6,7 +6,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { colorWheel } from './colorwheel.js';
-import { ACCEPT, MODEL_FORMATS, ext, groupFiles, parseModel, normalize } from './importers.js';
+import { ACCEPT, MODEL_FORMATS, ext, groupFiles, parseModel, normalize, setRenderer } from './importers.js';
 import { BRUSHES, BRUSH_BY_ID, CATEGORIES, DEFAULTS as BRUSH_DEFAULTS, EDITABLE, beginStroke, strokePoint, endStroke as finishEngine, preview, clearPreviews, registerBrush, unregisterBrush } from './brushes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -36,6 +36,7 @@ const box = $('box');
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+setRenderer(renderer);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 box.prepend(renderer.domElement);

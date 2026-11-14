@@ -55,6 +55,30 @@ const BLOB_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', we
  * Parses one model (main file + companions) into a THREE.Object3D.
  * Returns { object, animations }.
  */
+let rendererRef = null;
+/** The app hands over its renderer so compressed textures can pick a format the device supports. */
+export function setRenderer(r) { rendererRef = r; }
+const LIBS = new URL('./libs/', import.meta.url).href;
+let draco = null, ktx2 = null;
+async function dracoLoader() {
+  if (!draco) {
+    const { DRACOLoader } = await import(ADDONS + 'DRACOLoader.js');
+    draco = new DRACOLoader();
+    draco.setDecoderPath(LIBS + 'draco/');
+    draco.preload();
+  }
+  return draco;
+}
+async function ktx2Loader() {
+  if (!ktx2 && rendererRef) {
+    const { KTX2Loader } = await import(ADDONS + 'KTX2Loader.js');
+    ktx2 = new KTX2Loader();
+    ktx2.setTranscoderPath(LIBS + 'basis/');
+    ktx2.detectSupport(rendererRef);
+  }
+  return ktx2;
+}
+
 export async function parseModel(model) {
   installUrlModifier();
   const main = model.files[0];
@@ -99,6 +123,10 @@ async function parseByType(kind, main, files) {
       const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
+      // compressed models: Draco geometry and KTX2 (Basis) textures, decoded by files shipped with the app
+      loader.setDRACOLoader(await dracoLoader());
+      const ktx2 = await ktx2Loader();
+      if (ktx2) loader.setKTX2Loader(ktx2);
       // Use <img>-based texture loading (works inside sandboxed pages) rather than fetch.
       const saved = window.createImageBitmap;
       let gltf;
