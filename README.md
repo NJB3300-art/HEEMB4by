@@ -5,6 +5,8 @@
 
 **Open it:** https://njb3300-art.github.io/HEEMB4by/
 
+**Heemb4by is free forever. Everything you make with it is yours.**
+
 ## What it does
 - Draw with 65 brushes (pencils, inks, markers, airbrush, textures, stamps and more), with layers, an eraser, fill and an eyedropper.
 - Drawings live in the 3D world where you drew them; click them to move, turn or resize, or lock a layer to the camera frame.

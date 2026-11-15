@@ -3228,7 +3228,7 @@ function accountDialog(mode = 'login') {
       h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Cancel'), btn));
     form.addEventListener('submit', (e) => { e.preventDefault(); go(); });
     d.append(h('h2', { id: 'dlgTitle' }, mode === 'signup' ? 'Make an account' : 'Log in'), seg,
-      h('p', { class: 'note', style: 'margin:10px 0' }, 'Your account and projects are kept in this browser on this device. They don’t sync to other devices, and clearing your browser data removes them.'),
+      h('p', { class: 'note', style: 'margin:10px 0' }, 'Heemb4by is free forever. Everything you make with it is yours. Your account and projects are kept in this browser on this device. They don’t sync to other devices, and clearing your browser data removes them.'),
       form);
   });
 }
@@ -3269,6 +3269,7 @@ async function projectsDialog() {
     d.append(h('h2', { id: 'dlgTitle' }, 'projectsbby<3'),
       h('p', { class: 'note', style: 'margin:-4px 0 12px' }, `${user ? user.name + '’s' : 'Guest'} projects · ${list.length} / ${MAX_PROJECTS}${full ? ' · full, delete one to start another' : ''}`),
       grid,
+      h('p', { class: 'note free-note' }, 'Heemb4by is free forever. Everything you make with it is yours.'),
       h('div', { class: 'acts' },
         user ? null : h('button', { type: 'button', class: 'btn', onclick: () => accountDialog('signup') }, 'Sign up to save under your name'),
         h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Close'), newB));
