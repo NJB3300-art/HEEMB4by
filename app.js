@@ -606,12 +606,20 @@ function reattachGizmo() {
 
 const LIGHT_TYPES = { point: 'Point bulb', spot: 'Spotlight', dir: 'Directional', area: 'Area panel' };
 const LIGHT_DEFAULTS = {
-  point: { color: '#ffd7a1', intensity: 20, distance: 12, shadow: false },
-  spot: { color: '#fff3dc', intensity: 60, distance: 20, angle: 30, penumbra: 0.35, shadow: true },
-  dir: { color: '#ffffff', intensity: 2, shadow: true },
-  area: { color: '#dfe9ff', intensity: 8, width: 2, height: 1.2, shadow: false },
+  point: { color: '#ffd7a1', intensity: 160, distance: 18, shadow: false },
+  spot: { color: '#fff3dc', intensity: 500, distance: 30, angle: 30, penumbra: 0.35, shadow: true },
+  dir: { color: '#ffffff', intensity: 3, shadow: true },
+  area: { color: '#dfe9ff', intensity: 40, width: 2, height: 1.2, shadow: false },
 };
-const LIGHT_MAX = { point: 200, spot: 400, dir: 10, area: 60 };
+const LIGHT_MAX = { point: 2000, spot: 5000, dir: 12, area: 400 };
+// soft glow drawn around lamps so you can see where the light comes from
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.18, 'rgba(255,255,255,0.75)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
 const lights = [];
 let selectedLight = null, lightIconsOn = true;
 
@@ -666,8 +674,15 @@ function addLight(type, saved) {
   let cone = null;
   if (type === 'spot') { cone = new THREE.LineSegments(new THREE.BufferGeometry(), lineMat); icon.add(cone); }
   root.add(icon);
+  let glow = null;
+  if (type !== 'dir') {
+    glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: d.color, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, toneMapped: false, fog: false }));
+    glow.renderOrder = 50;
+    glow.raycast = () => {};
+    root.add(glow);
+  }
 
-  const L = { ...d, root, light, icon, iconMat, lineMat, cone };
+  const L = { ...d, root, light, icon, iconMat, lineMat, cone, glow };
   delete L.transform;
   if (saved?.transform) applyTransform(root, saved.transform);
   else {
@@ -692,6 +707,14 @@ function applyLight(L) {
   if (lt.isSpotLight) { lt.angle = THREE.MathUtils.degToRad(L.angle); lt.penumbra = L.penumbra; }
   if (lt.isRectAreaLight) { lt.width = L.width; lt.height = L.height; }
   if (lt.shadow) lt.castShadow = L.on && !!L.shadow;
+  if (L.glow) {
+    L.glow.visible = L.on && L.intensity > 0;
+    L.glow.material.color.set(L.color);
+    const k = { point: 160, spot: 500, area: 40 }[L.type] || 100;
+    const sz = Math.min(4, 0.7 + 0.9 * Math.sqrt(L.intensity / k));
+    L.glow.scale.set(sz, sz, 1);
+    L.glow.material.opacity = Math.min(1, 0.35 + 0.4 * Math.sqrt(L.intensity / k));
+  }
   const iconColor = L.on ? L.color : '#5a5f6b';
   L.icon.traverse((o) => {
     if (o.material?.color) o.material.color.set(iconColor);
@@ -710,7 +733,7 @@ function lightsVisible(v) {
 function removeLight(L) {
   if (selectedLight === L) selectLight(null);
   scene.remove(L.root);
-  L.root.traverse((o) => { o.geometry?.dispose(); if (o.material && o.material !== outlineSafe) o.material.dispose?.(); });
+  L.root.traverse((o) => { if (!o.isSprite) o.geometry?.dispose(); if (o.material && o.material !== outlineSafe) o.material.dispose?.(); });
   L.light.dispose?.();
   lights.splice(lights.indexOf(L), 1);
 }
@@ -900,7 +923,7 @@ function makeCanvas(w = proj.W, h = proj.H) {
 const sheetGroup = new THREE.Group();
 sheetGroup.name = 'drawings';
 scene.add(sheetGroup);
-proj.draw = { mode: 'auto', dist: 6, front: true };
+proj.draw = { mode: 'auto', dist: 6, front: true, lit: true };
 
 function newSheet(layerId, anchor, canvas) {
   return { id: uid(), layerId, anchor, xf: null, canvas: canvas || makeCanvas(), dirty: true, blob: null, mesh: null, tex: null };
@@ -954,6 +977,17 @@ function placeSheet(s) {
   m.quaternion.fromArray(x.q);
   m.scale.fromArray(x.s);
 }
+/** Drawings either take the scene's light (sun, night, lamps) or always show their full colors. */
+function sheetMaterial(m) {
+  const want = proj.draw.lit !== false;
+  if (m.userData.lit === want) return;
+  const old = m.material, map = old.map;
+  m.material = want
+    ? new THREE.MeshStandardMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, fog: false, envMapIntensity: lastEnvK < 0 ? 1 : lastEnvK })
+    : new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false, fog: false });
+  old.dispose();
+  m.userData.lit = want;
+}
 function sheetMesh(s) {
   if (!s.mesh) {
     s.tex = new THREE.CanvasTexture(s.canvas);
@@ -977,6 +1011,7 @@ function syncSheets(idx = proj.current, forExport = false) {
       if (!l || !l.visible) continue;
       if (!forExport && stroke && stroke.sheet === s) continue; // the live stroke is drawn on top instead
       const m = sheetMesh(s);
+      sheetMaterial(m);
       const locked = !!l.lock;
       if (locked || m.userData.locked) placeSheet(s);
       m.userData.locked = locked;
@@ -1381,6 +1416,7 @@ function syncMedia(idx, forExport) {
       seekMedia(m, t);
     }
     const mesh = sheetMesh(s);
+    sheetMaterial(mesh);
     const locked = !!l.lock;
     if (locked || mesh.userData.locked) placeSheet(s);
     mesh.userData.locked = locked;
@@ -2426,6 +2462,8 @@ function drawDepthSection() {
   const d = proj.draw;
   const sect = h('div', { class: 'sect' }, h('h3', {}, 'Drawings in 3D'));
   sect.append(chipRow('Where new drawings go', [['auto', 'On what’s under the pen'], ['fixed', 'Fixed distance']], d.mode, (v) => { d.mode = v; saveSoon(); renderLayersPane(); }));
+  sect.append(chipRow('Light on drawings', [['lit', 'Lit by the scene'], ['flat', 'Always full color']], d.lit !== false ? 'lit' : 'flat', (v) => { d.lit = v === 'lit'; markAllThumbs(); saveSoon(); renderLayersPane(); }));
+  if (d.lit !== false) sect.append(h('p', { class: 'note', style: 'margin:-2px 0 10px' }, 'Your drawings and imported pictures get the sun, the night and your lamps, just like the 3D scene.'));
   sect.append(chipRow('How drawings sit in the scene', [['front', 'Always in front'], ['behind', 'Can hide behind models']], d.front !== false ? 'front' : 'behind', (v) => { d.front = v === 'front'; markAllThumbs(); saveSoon(); renderLayersPane(); }));
   if (d.front === false) sect.append(h('p', { class: 'note', style: 'margin:-2px 0 10px' }, 'Models closer to the camera cover your drawing. Strokes drawn onto the ground or a model may sink into it.'));
   if (d.mode === 'fixed') sect.append(slider('Distance from camera', d.dist, 0.5, 80, 0.5, (v) => { d.dist = v; saveSoon(); }, (v) => v + ' m'));
@@ -2958,8 +2996,9 @@ function saveSoon() {
   saveTimer = setTimeout(saveNow, 1500);
 }
 const toBlob = (c) => new Promise((r) => c.toBlob(r, 'image/png'));
+let switching = false; // true while one project is being swapped for another: no saving then
 async function saveNow() {
-  if (!db) return;
+  if (!db || switching) return;
   if (saving) { saveAgain = true; return; }
   saving = true;
   $('saveStatus').textContent = 'Saving…';
@@ -3010,7 +3049,7 @@ async function loadSaved(id) {
   const data = await idb('readonly', (s) => s.get(projKey(id))).catch(() => null);
   if (!data || !data.meta) return false;
   const m = data.meta;
-  Object.assign(proj, { name: m.name, W: m.W, H: m.H, fps: m.fps, layers: m.layers, activeLayer: m.activeLayer, env: { ...proj.env, ...m.env }, draw: { mode: 'auto', dist: 6, front: true, ...(m.draw || {}) } });
+  Object.assign(proj, { name: m.name, W: m.W, H: m.H, fps: m.fps, layers: m.layers, activeLayer: m.activeLayer, env: { ...proj.env, ...m.env }, draw: { mode: 'auto', dist: 6, front: true, lit: true, ...(m.draw || {}) } });
   proj.frames = [];
   proj.importCount = m.importCount || 0;
   mediaSheets.clear(); proj.media = [];
@@ -3023,7 +3062,11 @@ async function loadSaved(id) {
   conesOn = data.conesOn ?? true;
   for (const cd of data.cams || []) addSceneCam(cd, cd);
   lightIconsOn = data.lightIconsOn ?? true;
-  for (const ld of data.lights || []) { try { addLight(ld.type, ld); } catch { /* skip */ } }
+  const OLD_DEFAULT = { point: 20, spot: 60, area: 8, dir: 2 };
+  for (const ld of data.lights || []) {
+    if (ld.intensity === OLD_DEFAULT[ld.type]) ld.intensity = LIGHT_DEFAULTS[ld.type].intensity; // lights made before they were brightened
+    try { addLight(ld.type, ld); } catch { /* skip */ }
+  }
   for (const fd of data.frames) {
     const f = newFrame(fd.cam, fd.camId || null);
     f.id = fd.id;
@@ -3057,7 +3100,7 @@ function clearSheetMeshes() {
 }
 function freshProject(opts = {}) {
   clearSheetMeshes();
-  proj.draw = { mode: 'auto', dist: 6, front: true };
+  proj.draw = { mode: 'auto', dist: 6, front: true, lit: true };
   mediaSheets.clear(); for (const m of proj.media) URL.revokeObjectURL(m.url); proj.media = []; proj.importCount = 0;
   proj.name = opts.name || 'My animation';
   proj.W = opts.W || 960; proj.H = opts.H || 540;
@@ -3073,7 +3116,7 @@ async function newProjectDialog() {
   await saveNow();
   if (!(await newProjectAllowed())) return;
   const sizes = [['Wide', 960, 540], ['Wide HD', 1280, 720], ['Square', 720, 720], ['Tall (phone)', 540, 960], ['Classic 4:3', 960, 720]];
-  let pick = 0, keepScene = true;
+  let pick = 0, keepScene = false;
   openDlg((d) => {
     const nameIn = h('input', { class: 'proj', style: 'width:100%;max-width:none', 'aria-label': 'Project name', autofocus: true }); nameIn.value = 'My animation';
     const opts = h('div', { class: 'opts', role: 'group', 'aria-label': 'Picture size' });
@@ -3084,14 +3127,19 @@ async function newProjectDialog() {
     });
     d.append(h('h2', { id: 'dlgTitle' }, 'New project'), h('p', {}, 'Your current project stays saved in projectsbby<3.'),
       nameIn, h('p', { style: 'margin:14px 0 6px' }, 'Picture size'), opts,
-      h('div', { style: 'margin-top:10px' }, check('Keep the 3D scene', keepScene, (v) => { keepScene = v; })),
+      h('div', { style: 'margin-top:10px' }, check('Keep this project’s 3D scene (otherwise you start fresh in Sample town)', keepScene, (v) => { keepScene = v; })),
       h('div', { class: 'acts' },
         h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Cancel'),
         h('button', { type: 'button', class: 'btn primary', onclick: () => {
           const [, w, hh] = sizes[pick];
           closeDlg();
           clearSheetMeshes(); stopSounds();
-          if (!keepScene) { for (const m of [...models]) removeModel(m); for (const c of [...sceneCams]) removeSceneCam(c); for (const L of [...lights]) removeLight(L); addSampleModel(); }
+          if (!keepScene) {
+            for (const m of [...models]) removeModel(m); for (const c of [...sceneCams]) removeSceneCam(c); for (const L of [...lights]) removeLight(L);
+            addSampleModel();
+            proj.env = { ...ENV_DEFAULTS };
+            resetStartView();
+          }
           freshProject({ name: nameIn.value.trim() || 'My animation', W: w, H: hh });
           undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
           startUI();
@@ -3131,6 +3179,13 @@ async function migrateLegacy() {
   await kvDel('project');
 }
 
+/** The camera spot a brand-new project starts from (looking into Sample town). */
+function resetStartView() {
+  if (hopped) hopOut();
+  camera.position.set(13, 3, 12);
+  camera.lookAt(0, 1, 0);
+  syncControllersFromCamera();
+}
 function clearScene() {
   if (playing) stopPlay();
   stopSounds();
@@ -3143,11 +3198,13 @@ function clearScene() {
 }
 async function openProject(id, { save = true } = {}) {
   if (save) await saveNow();
+  clearTimeout(saveTimer);
+  switching = true;
   clearScene();
   let ok = false;
-  try { ok = await loadSaved(id); } catch { ok = false; }
+  try { ok = await loadSaved(id); } catch { ok = false; } finally { switching = false; }
   if (ok) proj.id = id;
-  else { toast('That project couldn’t be opened'); addSampleModel(); freshProject(); }
+  else { toast('That project couldn’t be opened'); addSampleModel(); proj.env = { ...ENV_DEFAULTS }; resetStartView(); freshProject(); }
   await kvPut(lastKey(), proj.id);
   startUI();
   $('saveStatus').textContent = ok ? 'Opened ' + proj.name : '';
@@ -3158,7 +3215,7 @@ async function openSpace() {
   let id = await kvGet(lastKey());
   if (!list.some((p) => p.id === id)) id = list[0]?.id;
   if (id) return openProject(id, { save: false });
-  clearScene(); addSampleModel(); freshProject(); startUI(); saveNow();
+  clearScene(); addSampleModel(); proj.env = { ...ENV_DEFAULTS }; resetStartView(); freshProject(); startUI(); saveNow();
 }
 async function newProjectAllowed() {
   const list = await projList();
@@ -3169,12 +3226,18 @@ async function newProjectAllowed() {
   return true;
 }
 async function deleteProject(id) {
-  await kvDel(projKey(id));
-  const list = (await projList()).filter((p) => p.id !== id);
-  await kvPut(listKey(), list);
-  if (id === proj.id) {
+  clearTimeout(saveTimer);
+  if (id === proj.id) proj.id = null; // never re-save the one being deleted
+  let list;
+  switching = true;
+  try {
+    await kvDel(projKey(id));
+    list = (await projList()).filter((p) => p.id !== id);
+    await kvPut(listKey(), list);
+  } finally { switching = false; }
+  if (proj.id === null) {
     if (list.length) await openProject(list[0].id, { save: false });
-    else { clearScene(); addSampleModel(); freshProject(); startUI(); saveNow(); }
+    else { clearScene(); addSampleModel(); proj.env = { ...ENV_DEFAULTS }; resetStartView(); freshProject(); startUI(); saveNow(); }
   }
 }
 
@@ -3603,6 +3666,7 @@ window.addEventListener('orientationchange', () => setTimeout(layoutBox, 300));
 updateFsButton();
 $('newBtn').addEventListener('click', newProjectDialog);
 $('projName').addEventListener('input', (e) => { proj.name = e.target.value.trim() || 'My animation'; saveSoon(); });
+$('projName').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.target.blur(); } });
 
 /* =================================================================== start */
 
