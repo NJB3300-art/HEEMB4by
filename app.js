@@ -1073,8 +1073,9 @@ function dropArt() {
   clearArtOutlines();
   if (gizmo.object === artPivot) gizmo.detach();
 }
-function selectArt(sheets, layerId = null) {
+function selectArt(sheets, layerId = null, keepSpin = false) {
   clearArtOutlines();
+  if (!keepSpin) artSpin = 0;
   const f = curFrame();
   sheets = (sheets || []).filter((s) => s.media ? mediaSheets.get(s.layerId) === s && layerIndex(s.layerId) >= 0 : f && f.sheets.includes(s));
   if (!sheets.length) {
@@ -1107,7 +1108,7 @@ function selectArt(sheets, layerId = null) {
   if (activeTab === 'Layers') renderLayersPane();
   if (activeTab === 'Scene') renderScenePane();
 }
-function reselectArt() { if (selectedArt) selectArt(selectedArt.sheets, selectedArt.layerId); }
+function reselectArt() { if (selectedArt) selectArt(selectedArt.sheets, selectedArt.layerId, true); }
 
 gizmo.addEventListener('mouseDown', () => {
   if (!selectedArt || gizmo.object !== artPivot) return;
@@ -1116,11 +1117,24 @@ gizmo.addEventListener('mouseDown', () => {
 });
 gizmo.addEventListener('objectChange', () => {
   if (!selectedArt || gizmo.object !== artPivot) return;
+  followPivot();
+});
+gizmo.addEventListener('mouseUp', () => commitArtEdit());
+/** Remembers where the picked-up art is before a change (gizmo drag, spin, flip). */
+function beginArtEdit() {
+  if (!selectedArt) return null;
+  artPivot.updateMatrixWorld(true);
+  return { xfs: selectedArt.sheets.map((s) => (s.xf ? sheetXf(s) : null)), pivot: artPivot.matrixWorld.clone() };
+}
+/** Moves the picked-up drawings to follow the handle (artPivot). */
+function followPivot() {
+  if (!selectedArt) return;
   artPivot.updateMatrixWorld(true);
   selectedArt.sheets.forEach((s, i) => { s.xf = matrixXf(artPivot.matrixWorld.clone().multiply(artRel[i])); placeSheet(s); });
   curFrame().thumbDirty = true;
-});
-gizmo.addEventListener('mouseUp', () => {
+}
+/** Finishes a change: one undo step, and for a whole layer the same change on every frame. */
+function commitArtEdit(label, reselect = false) {
   if (!artDragStart || !selectedArt) return;
   const sel = selectedArt, start = artDragStart;
   artDragStart = null;
@@ -1146,14 +1160,45 @@ gizmo.addEventListener('mouseUp', () => {
     sheets.forEach((s, i) => { s.xf = vals[i]; if (s.mesh) placeSheet(s); });
     others.forEach((o, i) => { o.s.xf = ovals[i]; if (o.s.mesh) placeSheet(o.s); });
     markAllThumbs();
-    reselectArt();
+    if (selectedArt) selectArt(selectedArt.sheets, selectedArt.layerId); // spin readout starts over
     saveSoon();
   };
-  pushUndo(sel.layerId ? 'move layer art' : 'move drawing', () => apply(before, others.map((o) => o.was)), () => apply(after, othersAfter));
+  pushUndo(label || (sel.layerId ? 'move layer art' : 'move drawing'), () => apply(before, others.map((o) => o.was)), () => apply(after, othersAfter));
   markAllThumbs();
   saveSoon();
+  if (reselect) reselectArt();
   if (activeTab === 'Layers') renderLayersPane();
-});
+}
+
+/* ---------- 2D-style turning and flipping, around the drawing's own middle */
+let artSpin = 0; // degrees turned since this art was picked up (shown on the Spin slider)
+function artSpinBy(deg) {
+  if (!selectedArt) return;
+  artDragStart = beginArtEdit();
+  artPivot.rotateZ(THREE.MathUtils.degToRad(-deg));
+  followPivot();
+  artSpin = ((artSpin + deg + 540) % 360) - 180;
+  commitArtEdit('turn drawing');
+}
+function artFlip(axis) {
+  if (!selectedArt) return;
+  artDragStart = beginArtEdit();
+  if (axis === 'x') artPivot.scale.x *= -1; else artPivot.scale.y *= -1;
+  followPivot();
+  commitArtEdit('flip drawing');
+}
+function spinSlider() {
+  let base = null;
+  const field = slider('Spin', Math.round(artSpin), -180, 180, 1, (v) => {
+    if (!selectedArt) return;
+    if (!base) { artDragStart = beginArtEdit(); base = { q: artPivot.quaternion.clone(), from: artSpin }; }
+    artPivot.quaternion.copy(base.q).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(-(v - base.from))));
+    artSpin = v;
+    followPivot();
+  }, (v) => `${Math.round(v)}°`);
+  field.querySelector('input').addEventListener('change', () => { if (base) { base = null; commitArtEdit('turn drawing'); } });
+  return field;
+}
 
 function artPutBack() {
   const sel = selectedArt; if (!sel) return;
@@ -1206,7 +1251,14 @@ function artSection() {
   const sect = h('div', { class: 'sect art-sel' },
     h('h3', {}, sel.layerId ? `Moving layer: ${l?.name || ''}` : `Drawing on ${l?.name || 'layer'}`),
     h('div', { class: 'row' }, modeBtn('translate', 'Move'), modeBtn('rotate', 'Turn'), modeBtn('scale', 'Size')),
-    h('p', { class: 'note', style: 'margin:8px 0' }, 'Drag the handles in the picture to move it around the 3D scene. Click empty space to let go.'));
+    h('p', { class: 'note', style: 'margin:8px 0' }, 'Drag the handles in the picture to move it around the 3D scene. Click empty space to let go.'),
+    spinSlider(),
+    h('div', { class: 'row spin-row' },
+      h('button', { type: 'button', class: 'btn', title: 'Turn left 15°', onclick: () => artSpinBy(-15) }, '⟲ 15°'),
+      h('button', { type: 'button', class: 'btn', title: 'Turn right 15°', onclick: () => artSpinBy(15) }, '⟳ 15°'),
+      h('button', { type: 'button', class: 'btn', title: 'Turn a quarter', onclick: () => artSpinBy(90) }, '⟳ 90°'),
+      h('button', { type: 'button', class: 'btn', title: 'Mirror left to right', onclick: () => artFlip('x') }, '⇆ Flip'),
+      h('button', { type: 'button', class: 'btn', title: 'Mirror top to bottom', onclick: () => artFlip('y') }, '⇅ Flip')));
   const isMedia = sel.sheets[0].media;
   if (isMedia) {
     // imports keep their own layer
@@ -3365,6 +3417,7 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && selectedArt) { e.preventDefault(); artDelete(); return; }
   if (e.key === 'Escape' && selectedArt) { selectArt(null); return; }
+  if (selectedArt && tool === 'camera' && camMode !== 'fly' && !gizmo.dragging && (k === 'q' || k === 'e')) { artSpinBy(k === 'q' ? -15 : 15); if (activeTab === 'Layers') renderLayersPane(); return; }
   if (selectedArt && tool === 'camera' && !gizmo.dragging && (k === 'r' || k === 'm' || k === 'z')) { gizmo.setMode(k === 'm' ? 'translate' : k === 'r' ? 'rotate' : 'scale'); if (activeTab === 'Layers') renderLayersPane(); return; }
   if (k === 'h') { toggleHop(); return; }
   if (k === 'u') { if (!$('updateCamBtn').disabled) updateFrameCamera(); return; }
