@@ -3467,15 +3467,75 @@ $('fsBtn').addEventListener('click', () => (isImmersive() ? exitImmersive() : en
 $('app').addEventListener('scroll', (e) => { if (e.target === $('app')) { $('app').scrollTop = 0; $('app').scrollLeft = 0; } });
 
 /* ---------- background behind the picture: Aero plaza or plain black */
-function setBgOff(off) {
+// modes: 'plaza' (the Aero plaza), 'off' (plain black, purple bubbles), 'image' (your own picture)
+let bgImageUrl = null;
+const wantBg = recall('bgMode', recall('bgOff', false) ? 'off' : 'plaza');
+let bgMode = 'plaza';
+function setBgMode(mode, save = true) {
+  if (mode === 'image' && !bgImageUrl) mode = 'plaza';
+  bgMode = mode;
+  const off = mode === 'off', img = mode === 'image';
   $('app').classList.toggle('bg-off', off);
   document.body.classList.toggle('bg-off', off);
-  $('bgBtn').setAttribute('aria-pressed', String(off));
-  $('bgLabel').textContent = off ? 'Background on' : 'Background off';
-  store('bgOff', off);
+  $('app').classList.toggle('bg-img', img);
+  $('view').style.backgroundImage = img ? `url("${bgImageUrl}")` : '';
+  $('bgBtn').setAttribute('aria-pressed', String(mode !== 'plaza'));
+  $('bgLabel').textContent = mode === 'plaza' ? 'Background off' : 'Background on';
+  if (save) { store('bgMode', mode); store('bgOff', off); }
 }
-setBgOff(!!recall('bgOff', false));
-$('bgBtn').addEventListener('click', () => setBgOff(!$('app').classList.contains('bg-off')));
+setBgMode(wantBg === 'image' ? 'plaza' : wantBg, false); // your picture comes back once it's read from storage
+$('bgBtn').addEventListener('click', () => setBgMode(bgMode === 'plaza' ? 'off' : 'plaza'));
+async function loadBgImage() {
+  const b = await kvGet('uiBgImage');
+  if (!b) return;
+  bgImageUrl = URL.createObjectURL(b);
+  if (wantBg === 'image') setBgMode('image', false);
+}
+async function useBgImage(file) {
+  if (!file || mediaKind(file) !== 'image') { toast('Pick a picture (PNG, JPG…)'); return; }
+  // check it opens before keeping it
+  const url = URL.createObjectURL(file);
+  const ok = await new Promise((r) => { const i = new Image(); i.onload = () => r(true); i.onerror = () => r(false); i.src = url; });
+  if (!ok) { URL.revokeObjectURL(url); toast('That picture couldn’t be opened'); return; }
+  if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
+  bgImageUrl = url;
+  try { await kvPut('uiBgImage', file); } catch { toast('Your picture is showing, but couldn’t be saved for next time'); }
+  setBgMode('image');
+  toast('Your background is set');
+}
+async function removeBgImage() {
+  await kvDel('uiBgImage');
+  if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
+  bgImageUrl = null;
+  setBgMode('plaza');
+}
+function bgDialog() {
+  openDlg((d) => {
+    const opt = (mode, title, sub, swatch) => {
+      const b = h('button', { type: 'button', class: 'bgopt', 'aria-pressed': String(bgMode === mode) }, swatch, h('span', { class: 'bgopt-t' }, title), h('span', { class: 'bgopt-s' }, sub));
+      b.addEventListener('click', () => { setBgMode(mode); bgDialog(); });
+      return b;
+    };
+    const opts = h('div', { class: 'bgopts' },
+      opt('plaza', 'Aero plaza', 'The default', h('span', { class: 'bgsw bgsw-plaza' })),
+      opt('off', 'Off', 'Plain black, purple bubbles', h('span', { class: 'bgsw bgsw-off' })));
+    if (bgImageUrl) {
+      const sw = h('span', { class: 'bgsw' }); sw.style.backgroundImage = `url("${bgImageUrl}")`;
+      opts.append(opt('image', 'My picture', 'Your own background', sw));
+    }
+    const input = h('input', { type: 'file', accept: 'image/*,.png,.jpg,.jpeg,.webp,.gif,.heic', 'aria-label': 'Choose a background picture' });
+    input.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%';
+    input.addEventListener('change', async () => { const f = input.files[0]; input.value = ''; if (f) { await useBgImage(f); bgDialog(); } });
+    d.append(h('h2', { id: 'dlgTitle' }, 'Background'),
+      h('p', { class: 'note', style: 'margin:-4px 0 12px' }, 'What shows behind your picture. Your 3D scene isn’t changed.'),
+      opts,
+      h('div', { class: 'acts' },
+        bgImageUrl ? h('button', { type: 'button', class: 'btn', onclick: async () => { await removeBgImage(); bgDialog(); } }, 'Remove my picture') : null,
+        h('label', { class: 'btn', style: 'position:relative;overflow:hidden' }, bgImageUrl ? 'Choose another picture' : '+ Use my own picture', input),
+        h('button', { type: 'button', class: 'btn primary', onclick: () => closeDlg() }, 'Done')));
+  });
+}
+$('bgFab').addEventListener('click', bgDialog);
 $('toolsTab').addEventListener('click', () => setEdge('tools-open', 'toolsTab', !$('app').classList.contains('tools-open')));
 $('topTab').addEventListener('click', () => setEdge('top-open', 'topTab', !$('app').classList.contains('top-open')));
 $('stayPortrait').addEventListener('click', () => $('app').classList.add('allow-portrait'));
@@ -3516,6 +3576,7 @@ function startUI() {
   const remembered = recall('user', null);
   if (remembered) user = { name: remembered };
   updateAcctButton();
+  loadBgImage().catch(() => {});
   try {
     await migrateLegacy();
     const list = await projList();

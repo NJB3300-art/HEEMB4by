@@ -15,7 +15,7 @@
 - Move around with orbit or walk/fly controls, place cameras and hop inside them, add lights, set the sky and time of day.
 - Frames with onion skin and in-betweens; Export saves a frame as PNG or the whole animation as a video with sound.
 - Make an account (username + password) and keep up to 10 projects in **projectsbby<3**. Accounts and projects are stored in your browser on this device.
-- Frutiger Aero look, a black mode with purple bubbles, and a full-screen/landscape mode for phones.
+- Frutiger Aero look; the bottom-left Background button switches to black mode (purple bubbles) or your own background picture; full-screen/landscape mode for phones.
 
 Everything runs in your browser; your project autosaves on your device.
 

@@ -846,6 +846,30 @@ body.bg-off .acct-err { color: #ffb4c8; }
 body.bg-off .pcard { background-color: rgba(110,45,190,0.35) !important; border-color: rgba(220,170,255,0.6); }
 @media (max-width: 600px) { .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .pname { font-size: 13px; } .pmeta { font-size: 11px; } }
 .free-note { margin: 12px 0 0; text-align: center; font-weight: 700; flex-shrink: 0; }
+
+/* ---------- background picker (bottom left) and your own background picture */
+.bg-fab { position: absolute; left: 14px; bottom: 14px; z-index: 32; width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; color: #1d5f99;
+  border: 1px solid rgba(255,255,255,0.95); background: var(--gel-white); box-shadow: var(--bubble-rim), 0 6px 16px rgba(10,60,120,0.3); }
+.bg-fab svg { width: 24px; height: 24px; }
+.bg-fab:hover { background: var(--gel-aqua); }
+.app.time-open .bg-fab { bottom: 246px; left: 86px; }
+@media (max-width: 900px) { .bg-fab { width: 44px; height: 44px; left: 10px; bottom: 10px; } .app.time-open .bg-fab { bottom: 214px; left: 72px; } }
+@media (max-height: 500px) { .app.time-open .bg-fab { display: none; } }
+.app.immersive .bg-fab { display: none; }
+body.bg-off .bg-fab { color: #fff; border-color: rgba(230,190,255,0.85); }
+#app.bg-img .aero-bg { display: none; }
+#app.bg-img .view { background-color: #000 !important; background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }
+.bgopts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.bgopt { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 8px 10px; border-radius: 16px; cursor: pointer; text-align: left; color: inherit; font: inherit;
+  border: 1px solid rgba(255,255,255,0.95); background: radial-gradient(120% 70% at 25% 0%, rgba(255,255,255,0.85), rgba(255,255,255,0.25) 50%), rgba(220,240,255,0.5); box-shadow: inset 0 1px 0 #fff, 0 4px 12px rgba(10,60,120,0.15); }
+.bgopt[aria-pressed="true"] { box-shadow: inset 0 1px 0 #fff, 0 0 0 3px rgba(40,160,255,0.75), 0 6px 16px rgba(10,60,120,0.2); }
+.bgsw { width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; background: #000 center / cover no-repeat; margin-bottom: 4px; }
+.bgsw-plaza { background: linear-gradient(180deg, #1f8fea 0%, #5cb8f7 40%, #a8ddff 62%, #dff3ff 64%, #9fd2a8 80%, #6fb07a 100%); }
+.bgsw-off { background: radial-gradient(80% 60% at 50% 40%, #2a1048, #000); }
+.bgopt-t { font-weight: 800; font-size: 14px; }
+.bgopt-s { font-size: 12px; opacity: 0.75; }
+body.bg-off .bgopt { background-color: rgba(110,45,190,0.35); border-color: rgba(220,170,255,0.6); }
+body.bg-off .bgopt[aria-pressed="true"] { box-shadow: inset 0 1px 0 #fff, 0 0 0 3px rgba(200,120,255,0.8); }
 </style>
 </head>
 <body>
@@ -898,6 +922,9 @@ body.bg-off .pcard { background-color: rgba(110,45,190,0.35) !important; border-
       <button type="button" class="btn" id="stayPortrait">Stay in portrait</button>
     </div>
   </div>
+  <button type="button" class="bg-fab" id="bgFab" title="Background: plaza, off, or your own picture" aria-label="Change the background">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
+  </button>
   <main class="view" id="view">
     <div class="aero-bg" aria-hidden="true">
       
