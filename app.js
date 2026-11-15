@@ -2706,6 +2706,7 @@ let dlgClose = null, lastFocus = null;
 function openDlg(build, onClose) {
   lastFocus = document.activeElement;
   dlg.innerHTML = '';
+  dlg.classList.remove('wide');
   build(dlg);
   scrim.classList.add('open');
   dlgClose = onClose || null;
@@ -2775,8 +2776,8 @@ function exportDialog() {
       b.addEventListener('click', () => { loops = v; lo.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
       lo.append(b);
     }
-    d.append(h('h2', { id: 'dlgTitle' }, 'Export'),
-      h('p', {}, `${proj.frames.length} frames at ${proj.fps} fps, ${proj.W}×${proj.H}. The grid and move handles are left out.`),
+    d.append(h('h2', { id: 'dlgTitle' }, 'Export your animation'),
+      h('p', {}, `${proj.frames.length} frame${proj.frames.length === 1 ? '' : 's'} at ${proj.fps} fps, ${proj.W}×${proj.H}. The grid and move handles are left out.`),
       canVideo ? h('div', {}, h('p', { style: 'margin-bottom:6px' }, 'Play the animation'), lo) : h('p', {}, 'Video export isn’t available in this browser. You can still export the current frame.'),
       h('div', { class: 'acts' },
         h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Cancel'),
@@ -2818,8 +2819,12 @@ function exportFrame() {
   const c = makeCanvas();
   withExportRenderer(async () => { await prepMediaFor(proj.current); renderExportFrame(c.getContext('2d'), proj.current); }).then(() => {
     const url = c.toDataURL('image/png');
-    openDlg((d) => d.append(h('h2', { id: 'dlgTitle' }, `Frame ${proj.current + 1}`), h('p', {}, 'Right-click or long-press the picture and choose Save image.'),
-      h('img', { src: url, alt: `Frame ${proj.current + 1} of ${proj.name}` }), h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn primary', onclick: () => closeDlg() }, 'Done'))));
+    c.toBlob((blob) => {
+      openDlg((d) => d.append(h('h2', { id: 'dlgTitle' }, `Frame ${proj.current + 1}`),
+        h('p', {}, inPreview ? 'Downloads are blocked inside this preview. Right-click or long-press the picture to save it, or open the site at njb3300-art.github.io/HEEMB4by.' : 'Save it with Download, or right-click / long-press the picture.'),
+        h('img', { src: url, alt: `Frame ${proj.current + 1} of ${proj.name}` }),
+        h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Done'), ...saveButtons(blob, `${safeName()} frame ${proj.current + 1}.png`))));
+    }, 'image/png');
   });
 }
 
@@ -2864,9 +2869,9 @@ async function exportVideo(loops) {
   const url = URL.createObjectURL(blob);
   const kind = (rec.mimeType || 'video/webm').includes('mp4') ? 'MP4' : 'WebM';
   openDlg((d) => d.append(h('h2', { id: 'dlgTitle' }, 'Your video'),
-    h('p', {}, `${kind}, ${(blob.size / 1048576).toFixed(1)} MB. Right-click the video and choose Save video as.`),
+    h('p', {}, `${kind}, ${(blob.size / 1048576).toFixed(1)} MB. ` + (inPreview ? 'Downloads are blocked inside this preview. Right-click the video and choose Save video as, or open the site at njb3300-art.github.io/HEEMB4by to download.' : 'Tap Download to save it.')),
     h('video', { src: url, controls: true, autoplay: true, loop: true, playsinline: true }),
-    h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn primary', onclick: () => closeDlg() }, 'Done'))),
+    h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Done'), ...saveButtons(blob, `${safeName()}.${kind === 'MP4' ? 'mp4' : 'webm'}`))),
   () => setTimeout(() => URL.revokeObjectURL(url), 1000));
 }
 
@@ -2929,7 +2934,17 @@ async function saveNow() {
       conesOn,
       models: models.map((m) => ({ id: m.id, kind: m.kind, name: m.name, files: m.files, visible: m.visible, animate: m.animate, clip: m.clip, transform: getTransform(m.root), inner: m.kind === 'file' ? getTransform(m.inner) : null })),
     };
-    await idb('readwrite', (s) => s.put(data, 'project'));
+    if (!proj.id) proj.id = uid();
+    const list = await projList();
+    let entry = list.find((p) => p.id === proj.id);
+    if (!entry && list.length >= MAX_PROJECTS) { $('saveStatus').textContent = 'Not saved: 10 projects max'; return; }
+    await idb('readwrite', (s) => s.put(data, projKey(proj.id)));
+    let thumb = null;
+    try { const t = proj.frames[0]?.thumb; if (t && t.width) thumb = t.toDataURL('image/jpeg', 0.7); } catch { /* no thumbnail */ }
+    if (!entry) { entry = { id: proj.id }; list.unshift(entry); }
+    Object.assign(entry, { name: proj.name, updated: Date.now(), frames: proj.frames.length, thumb: thumb || entry.thumb || null });
+    await kvPut(listKey(), list);
+    await kvPut(lastKey(), proj.id);
     $('saveStatus').textContent = 'Saved ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
     $('saveStatus').textContent = 'Couldn’t save (storage full?)';
@@ -2939,8 +2954,8 @@ async function saveNow() {
   }
 }
 
-async function loadSaved() {
-  const data = await idb('readonly', (s) => s.get('project')).catch(() => null);
+async function loadSaved(id) {
+  const data = await idb('readonly', (s) => s.get(projKey(id))).catch(() => null);
   if (!data || !data.meta) return false;
   const m = data.meta;
   Object.assign(proj, { name: m.name, W: m.W, H: m.H, fps: m.fps, layers: m.layers, activeLayer: m.activeLayer, env: { ...proj.env, ...m.env }, draw: { mode: 'auto', dist: 6, front: true, ...(m.draw || {}) } });
@@ -2999,9 +3014,12 @@ function freshProject(opts = {}) {
   proj.activeLayer = l.id;
   proj.frames = [newFrame(captureCam())];
   proj.current = 0;
+  proj.id = uid();
 }
 
-function newProjectDialog() {
+async function newProjectDialog() {
+  await saveNow();
+  if (!(await newProjectAllowed())) return;
   const sizes = [['Wide', 960, 540], ['Wide HD', 1280, 720], ['Square', 720, 720], ['Tall (phone)', 540, 960], ['Classic 4:3', 960, 720]];
   let pick = 0, keepScene = true;
   openDlg((d) => {
@@ -3012,7 +3030,7 @@ function newProjectDialog() {
       b.addEventListener('click', () => { pick = i; opts.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
       opts.append(b);
     });
-    d.append(h('h2', { id: 'dlgTitle' }, 'New project'), h('p', {}, 'This replaces the current project. Export it first if you want to keep it.'),
+    d.append(h('h2', { id: 'dlgTitle' }, 'New project'), h('p', {}, 'Your current project stays saved in projectsbby<3.'),
       nameIn, h('p', { style: 'margin:14px 0 6px' }, 'Picture size'), opts,
       h('div', { style: 'margin-top:10px' }, check('Keep the 3D scene', keepScene, (v) => { keepScene = v; })),
       h('div', { class: 'acts' },
@@ -3020,6 +3038,7 @@ function newProjectDialog() {
         h('button', { type: 'button', class: 'btn primary', onclick: () => {
           const [, w, hh] = sizes[pick];
           closeDlg();
+          clearSheetMeshes(); stopSounds();
           if (!keepScene) { for (const m of [...models]) removeModel(m); for (const c of [...sceneCams]) removeSceneCam(c); for (const L of [...lights]) removeLight(L); addSampleModel(); }
           freshProject({ name: nameIn.value.trim() || 'My animation', W: w, H: hh });
           undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
@@ -3028,6 +3047,258 @@ function newProjectDialog() {
         } }, 'Create')));
   });
 }
+
+/* =================================================================== accounts & projects
+   Accounts and projects live in this browser (IndexedDB). Each person (or the guest space)
+   keeps up to 10 projects. Passwords are stored only as a salted PBKDF2 hash. */
+
+const MAX_PROJECTS = 10;
+let user = null; // { name } while logged in
+proj.id = null;
+const space = () => (user ? 'u:' + user.name.toLowerCase() : 'guest');
+const projKey = (id, sp = space()) => `proj:${sp}:${id}`;
+const listKey = (sp = space()) => `list:${sp}`;
+const lastKey = (sp = space()) => `last:${sp}`;
+const kvGet = (k) => idb('readonly', (s) => s.get(k)).catch(() => null);
+const kvPut = (k, v) => idb('readwrite', (s) => s.put(v, k));
+const kvDel = (k) => idb('readwrite', (s) => s.delete(k));
+async function projList(sp = space()) { return (await kvGet(listKey(sp))) || []; }
+
+/** Older versions kept one project under "project": it becomes the first guest project. */
+async function migrateLegacy() {
+  const old = await kvGet('project');
+  if (!old || !old.meta) return;
+  const list = await projList('guest');
+  if (list.length < MAX_PROJECTS) {
+    const id = uid();
+    await kvPut(projKey(id, 'guest'), old);
+    list.unshift({ id, name: old.meta.name || 'My animation', updated: Date.now(), frames: (old.frames || []).length, thumb: null });
+    await kvPut(listKey('guest'), list);
+    await kvPut(lastKey('guest'), id);
+  }
+  await kvDel('project');
+}
+
+function clearScene() {
+  if (playing) stopPlay();
+  stopSounds();
+  for (const m of [...models]) removeModel(m);
+  for (const c of [...sceneCams]) removeSceneCam(c);
+  for (const L of [...lights]) removeLight(L);
+  clearSheetMeshes();
+  proj.frames = [];
+  undoStack.length = 0; redoStack.length = 0; updateUndoButtons();
+}
+async function openProject(id, { save = true } = {}) {
+  if (save) await saveNow();
+  clearScene();
+  let ok = false;
+  try { ok = await loadSaved(id); } catch { ok = false; }
+  if (ok) proj.id = id;
+  else { toast('That project couldn’t be opened'); addSampleModel(); freshProject(); }
+  await kvPut(lastKey(), proj.id);
+  startUI();
+  $('saveStatus').textContent = ok ? 'Opened ' + proj.name : '';
+}
+/** After logging in or out: open that space's last project, or start a new one. */
+async function openSpace() {
+  const list = await projList();
+  let id = await kvGet(lastKey());
+  if (!list.some((p) => p.id === id)) id = list[0]?.id;
+  if (id) return openProject(id, { save: false });
+  clearScene(); addSampleModel(); freshProject(); startUI(); saveNow();
+}
+async function newProjectAllowed() {
+  const list = await projList();
+  if (list.length >= MAX_PROJECTS) {
+    await confirmDlg('10 projects saved', 'You can keep up to 10 projects. Open projectsbby<3 and delete one to make room.', 'OK');
+    return false;
+  }
+  return true;
+}
+async function deleteProject(id) {
+  await kvDel(projKey(id));
+  const list = (await projList()).filter((p) => p.id !== id);
+  await kvPut(listKey(), list);
+  if (id === proj.id) {
+    if (list.length) await openProject(list[0].id, { save: false });
+    else { clearScene(); addSampleModel(); freshProject(); startUI(); saveNow(); }
+  }
+}
+
+/* ---------- passwords */
+async function hashPw(name, pw, salt) {
+  if (!window.crypto?.subtle) throw new Error('no-crypto');
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt + ':' + name.toLowerCase()), iterations: 150000, hash: 'SHA-256' }, key, 256);
+  return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const randSalt = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+async function signUp(name, pw, moveGuest) {
+  name = name.trim();
+  if (!/^[A-Za-z0-9_.-]{3,20}$/.test(name)) return 'Usernames are 3–20 letters, numbers, dots, dashes or underscores.';
+  if (pw.length < 4) return 'Use a password of at least 4 characters.';
+  const users = (await kvGet('users')) || {};
+  if (users[name.toLowerCase()]) return 'That username is taken on this device. Try logging in.';
+  const salt = randSalt();
+  users[name.toLowerCase()] = { name, salt, hash: await hashPw(name, pw, salt), created: Date.now() };
+  await kvPut('users', users);
+  await saveNow();
+  const fromGuest = moveGuest ? await projList('guest') : [];
+  user = { name };
+  if (fromGuest.length) {
+    const mine = await projList();
+    const moving = fromGuest.slice(0, MAX_PROJECTS - mine.length);
+    for (const p of moving) {
+      const data = await kvGet(projKey(p.id, 'guest'));
+      if (data) await kvPut(projKey(p.id), data);
+      await kvDel(projKey(p.id, 'guest'));
+    }
+    await kvPut(listKey(), [...moving, ...mine]);
+    await kvPut(listKey('guest'), fromGuest.slice(moving.length));
+    if (moving.some((p) => p.id === proj.id)) await kvPut(lastKey(), proj.id);
+  }
+  return null;
+}
+async function logIn(name, pw) {
+  const users = (await kvGet('users')) || {};
+  const u = users[name.trim().toLowerCase()];
+  if (!u || (await hashPw(u.name, pw, u.salt)) !== u.hash) return 'Wrong username or password.';
+  await saveNow();
+  user = { name: u.name };
+  return null;
+}
+async function logOut() {
+  await saveNow();
+  user = null;
+  store('user', null);
+  updateAcctButton();
+  await openSpace();
+  toast('Logged out');
+}
+function updateAcctButton() {
+  $('acctLabel').textContent = user ? user.name : 'Log in';
+  $('acctBtn').setAttribute('aria-label', user ? `Account: ${user.name}` : 'Log in or sign up');
+}
+
+function accountDialog(mode = 'login') {
+  if (user) {
+    openDlg((d) => d.append(h('h2', { id: 'dlgTitle' }, `Hi, ${user.name}`),
+      h('p', {}, 'Your projects are saved under your account in this browser.'),
+      h('div', { class: 'acts' },
+        h('button', { type: 'button', class: 'btn', onclick: () => { closeDlg(); logOut(); } }, 'Log out'),
+        h('button', { type: 'button', class: 'btn', onclick: () => { closeDlg(); projectsDialog(); } }, 'projectsbby<3'),
+        h('button', { type: 'button', class: 'btn primary', onclick: () => closeDlg() }, 'Done'))));
+    return;
+  }
+  openDlg((d) => {
+    const seg = h('div', { class: 'opts', role: 'group', 'aria-label': 'Log in or sign up' });
+    for (const [m, label] of [['login', 'Log in'], ['signup', 'Sign up']]) {
+      const b = h('button', { type: 'button', class: 'btn', 'aria-pressed': String(m === mode) }, label);
+      b.addEventListener('click', () => accountDialog(m));
+      seg.append(b);
+    }
+    const nameIn = h('input', { class: 'proj acct-in', type: 'text', autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Username', placeholder: 'Username', autofocus: true });
+    const pwIn = h('input', { class: 'proj acct-in', type: 'password', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', 'aria-label': 'Password', placeholder: 'Password' });
+    const err = h('p', { class: 'acct-err', role: 'alert' });
+    let remember = true, moveGuest = true;
+    const go = async () => {
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        const why = mode === 'signup' ? await signUp(nameIn.value, pwIn.value, moveGuest) : await logIn(nameIn.value, pwIn.value);
+        if (why) { err.textContent = why; btn.disabled = false; return; }
+        store('user', remember ? user.name : null);
+        updateAcctButton();
+        closeDlg();
+        await openSpace();
+        toast(mode === 'signup' ? `Welcome, ${user.name}!` : `Welcome back, ${user.name}!`);
+      } catch (e) {
+        err.textContent = String(e?.message) === 'no-crypto' ? 'Accounts need a secure (https) page.' : 'Something went wrong. Try again.';
+        btn.disabled = false;
+      }
+    };
+    const btn = h('button', { type: 'submit', class: 'btn primary' }, mode === 'signup' ? 'Create account' : 'Log in');
+    const form = h('form', { class: 'acct-form' }, nameIn, pwIn,
+      check('Keep me logged in on this device', remember, (v) => { remember = v; }),
+      mode === 'signup' ? check('Move my guest projects into this account', moveGuest, (v) => { moveGuest = v; }) : null,
+      err,
+      h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Cancel'), btn));
+    form.addEventListener('submit', (e) => { e.preventDefault(); go(); });
+    d.append(h('h2', { id: 'dlgTitle' }, mode === 'signup' ? 'Make an account' : 'Log in'), seg,
+      h('p', { class: 'note', style: 'margin:10px 0' }, 'Your account and projects are kept in this browser on this device. They don’t sync to other devices, and clearing your browser data removes them.'),
+      form);
+  });
+}
+
+const ago = (t) => {
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(t).toLocaleDateString();
+};
+async function projectsDialog() {
+  await saveNow();
+  const list = (await projList()).sort((a, b) => b.updated - a.updated);
+  openDlg((d) => {
+    d.classList.add('wide');
+    const grid = h('div', { class: 'pgrid' });
+    for (const p of list) {
+      const cur = p.id === proj.id;
+      const del = h('button', { type: 'button', class: 'mini', 'aria-label': 'Delete ' + p.name, title: 'Delete' }, svg(ICON.trash));
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ok = await confirmDlg(`Delete “${p.name}”?`, 'This can’t be undone.', 'Delete');
+        if (ok) { await deleteProject(p.id); toast('Project deleted'); }
+        projectsDialog();
+      });
+      const card = h('button', { type: 'button', class: 'pcard' + (cur ? ' cur' : ''), 'aria-label': `${cur ? 'Open now: ' : 'Open '}${p.name}` },
+        p.thumb ? h('img', { src: p.thumb, alt: '' }) : h('div', { class: 'pthumb' }),
+        h('div', { class: 'pname' }, p.name),
+        h('div', { class: 'pmeta' }, cur ? 'Open now' : `${p.frames || 1} frame${p.frames === 1 ? '' : 's'} · ${ago(p.updated)}`));
+      card.addEventListener('click', async () => { closeDlg(); if (!cur) { await openProject(p.id); toast('Opened ' + p.name); } });
+      grid.append(h('div', { class: 'pwrap' }, card, del));
+    }
+    if (!list.length) grid.append(h('p', { class: 'note' }, 'No saved projects yet.'));
+    const full = list.length >= MAX_PROJECTS;
+    const newB = h('button', { type: 'button', class: 'btn primary', onclick: () => { closeDlg(); newProjectDialog(); } }, '+ New project');
+    if (full) newB.disabled = true;
+    d.append(h('h2', { id: 'dlgTitle' }, 'projectsbby<3'),
+      h('p', { class: 'note', style: 'margin:-4px 0 12px' }, `${user ? user.name + '’s' : 'Guest'} projects · ${list.length} / ${MAX_PROJECTS}${full ? ' · full, delete one to start another' : ''}`),
+      grid,
+      h('div', { class: 'acts' },
+        user ? null : h('button', { type: 'button', class: 'btn', onclick: () => accountDialog('signup') }, 'Sign up to save under your name'),
+        h('button', { type: 'button', class: 'btn', onclick: () => closeDlg() }, 'Close'), newB));
+  }, () => dlg.classList.remove('wide'));
+}
+
+/* ---------- saving files out (downloads work on the real site; the Claude preview blocks them) */
+const inPreview = (() => { try { return window.self !== window.top; } catch { return true; } })();
+function saveButtons(blob, filename) {
+  const row = [];
+  const dl = h('button', { type: 'button', class: 'btn primary' }, 'Download');
+  dl.addEventListener('click', () => {
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: filename });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    if (inPreview) toast('If nothing downloaded, open the site at njb3300-art.github.io/HEEMB4by to save files');
+  });
+  row.push(dl);
+  try {
+    const file = new File([blob], filename, { type: blob.type });
+    if (navigator.canShare?.({ files: [file] })) {
+      const sh = h('button', { type: 'button', class: 'btn' }, 'Share / Save to Photos');
+      sh.addEventListener('click', () => navigator.share({ files: [file], title: proj.name }).catch(() => {}));
+      row.push(sh);
+    }
+  } catch { /* no sharing */ }
+  return row;
+}
+const safeName = () => (proj.name || 'animation').replace(/[^\w\- ]+/g, '').trim() || 'animation';
 
 /* =================================================================== import */
 
@@ -3147,6 +3418,8 @@ $('delFrameBtn').addEventListener('click', async () => {
   if (!hasArt || await confirmDlg('Delete frame?', `Frame ${proj.current + 1} and its drawings will be removed. You can undo this.`, 'Delete')) deleteFrame();
 });
 $('exportBtn').addEventListener('click', exportDialog);
+$('projectsBtn').addEventListener('click', projectsDialog);
+$('acctBtn').addEventListener('click', () => accountDialog());
 
 /* ---------- full screen / landscape: only the picture, controls tucked behind edge arrows */
 let wasFullscreen = false;
@@ -3239,8 +3512,18 @@ function startUI() {
   loadMyBrushes();
   db = await openDB();
   let restored = false;
-  try { restored = await loadSaved(); } catch { restored = false; }
+  const remembered = recall('user', null);
+  if (remembered) user = { name: remembered };
+  updateAcctButton();
+  try {
+    await migrateLegacy();
+    const list = await projList();
+    let id = await kvGet(lastKey());
+    if (!list.some((p) => p.id === id)) id = list[0]?.id;
+    if (id) { restored = await loadSaved(id); if (restored) proj.id = id; }
+  } catch { restored = false; }
   if (!restored) {
+    clearSheetMeshes();
     if (!models.length) addSampleModel();
     freshProject();
   }

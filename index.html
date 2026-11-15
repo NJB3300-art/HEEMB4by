@@ -820,6 +820,31 @@ body.bg-off .upd-frame:disabled { opacity: 0.75; }
 /* timeline open: keep the frame buttons clear of the Timeline tab */
 @media (min-height: 501px) { .app.time-open .hud.bc { bottom: 288px; } }
 @media (min-height: 501px) and (max-width: 900px) { .app.time-open .hud.bc { bottom: 256px; } }
+
+/* ---------- projects & account */
+.proj-btn { font-weight: 800; color: #c2185b !important; background: radial-gradient(90% 70% at 30% 18%, rgba(255,255,255,0.95), rgba(255,255,255,0.3) 45%, rgba(255,255,255,0) 62%), radial-gradient(120% 90% at 70% 120%, rgba(255,120,190,0.55), rgba(255,120,190,0) 62%), rgba(255,215,235,0.75) !important; border-color: rgba(255,170,210,0.95) !important; }
+.proj-btn .lbl { display: inline !important; }
+#app.bg-off .proj-btn, body.bg-off .proj-btn { color: #fff !important; }
+.dlg.wide { width: min(860px, 100%); display: flex; flex-direction: column; overflow: hidden; }
+.dlg.wide .pgrid { overflow: auto; min-height: 0; flex: 1; padding: 4px; margin: -4px; }
+.dlg.wide .acts { flex-shrink: 0; }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.pwrap { position: relative; }
+.pcard { width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 10px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.95); text-align: left; cursor: pointer; color: inherit; font: inherit;
+  background: radial-gradient(120% 70% at 25% 0%, rgba(255,255,255,0.85), rgba(255,255,255,0.25) 50%), rgba(220,240,255,0.5); box-shadow: inset 0 1px 0 #fff, inset 0 -10px 20px rgba(110,180,235,0.2), 0 4px 12px rgba(10,60,120,0.15); }
+.pcard:hover { box-shadow: inset 0 1px 0 #fff, 0 0 0 2px rgba(60,170,255,0.6), 0 6px 16px rgba(10,60,120,0.2); }
+.pcard.cur { box-shadow: inset 0 1px 0 #fff, 0 0 0 3px rgba(255,120,190,0.75), 0 6px 16px rgba(10,60,120,0.2); }
+.pcard img, .pcard .pthumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; background: linear-gradient(180deg, #cfeaff, #eaf6ff); }
+.pname { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 30px; }
+.pmeta { font-size: 12px; opacity: 0.75; }
+.pcard.cur .pmeta { color: #c2185b; opacity: 1; font-weight: 700; }
+.pwrap > .mini { position: absolute; right: 8px; bottom: 10px; }
+.acct-form { display: flex; flex-direction: column; gap: 10px; }
+.acct-in { width: 100%; max-width: none !important; font-size: 16px; }
+.acct-err { color: #c62828; font-weight: 700; min-height: 1em; margin: 0; }
+body.bg-off .acct-err { color: #ffb4c8; }
+body.bg-off .pcard { background-color: rgba(110,45,190,0.35) !important; border-color: rgba(220,170,255,0.6); }
+@media (max-width: 600px) { .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .pname { font-size: 13px; } .pmeta { font-size: 11px; } }
 </style>
 </head>
 <body>
@@ -829,6 +854,9 @@ body.bg-off .upd-frame:disabled { opacity: 0.75; }
     <a class="credit" href="https://www.instagram.com/nyheimb/" target="_blank" rel="noopener" title="Heemb4by on Instagram">@nyheimb</a>
     <label class="sr" for="projName">Project name</label>
     <input class="proj" id="projName" value="My animation" maxlength="40" autocomplete="off">
+    <button class="btn proj-btn" id="projectsBtn" title="All your saved projects (up to 10)"><span class="lbl">projectsbby&lt;3</span></button>
+    <button class="btn primary" id="exportBtn" title="Save your animation as a video or a picture"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span class="lbl">Export</span></button>
+    <button class="btn" id="acctBtn" title="Log in or make an account to save your work"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span class="lbl" id="acctLabel">Log in</span></button>
     <button class="btn icon" id="undoBtn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
     <button class="btn icon" id="redoBtn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
     <div class="grow"></div>
@@ -852,7 +880,6 @@ body.bg-off .upd-frame:disabled { opacity: 0.75; }
       <span class="lbl" id="fsLabel">Full screen</span>
     </button>
     <button class="btn" id="newBtn" title="New project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New</span></button>
-    <button class="btn primary" id="exportBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span class="lbl">Export</span></button>
   </header>
 
   <nav class="tools glass" id="tools" aria-label="Tools"></nav>
