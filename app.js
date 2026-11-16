@@ -87,7 +87,7 @@ orbit.addEventListener('change', markInteract);
 orbit.update();
 
 const gizmo = new TransformControls(camera, renderer.domElement);
-gizmo.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value && camMode === 'orbit'; if (!e.value) { saveSoon(); markAllThumbs(); } });
+gizmo.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value && camMode === 'orbit' && !viewLocked; if (!e.value) { saveSoon(); markAllThumbs(); } });
 scene.add(gizmo);
 
 /* ---------- sky, time of day, sun & moon */
@@ -492,6 +492,14 @@ function flushOrbit() {
   orbit.update();
   orbit.enableDamping = true;
 }
+/** Throws away leftover orbit glide without moving the view at all. */
+function stopOrbitGlide() {
+  const p = camera.position.clone(), q = camera.quaternion.clone();
+  flushOrbit();
+  camera.position.copy(p); camera.quaternion.copy(q);
+  syncControllersFromCamera();
+  if (fly.vel) fly.vel.set(0, 0, 0);
+}
 /* ---------- scene cameras you can hop into */
 
 const sceneCams = []; // { id, name, obj, proxy, helper, fov }
@@ -548,10 +556,12 @@ function removeSceneCam(c) {
   for (const f of proj.frames) if (f.camId === c.id) f.camId = null;
   if (lastHopped === c) lastHopped = null;
 }
+let ghostCam = null; // camera you just hopped out of: kept hidden while you're still at its spot
+let viewLocked = false;
 function camsVisible(v) {
   for (const c of sceneCams) {
-    c.obj.visible = v && c !== hopped;
-    c.helper.visible = v && c !== hopped && conesOn;
+    c.obj.visible = v && c !== hopped && c !== ghostCam;
+    c.helper.visible = v && c !== hopped && c !== ghostCam && conesOn;
   }
   lightsVisible(v);
 }
@@ -576,22 +586,37 @@ function hopIn(c) {
   updateHopUI();
   toast(`Inside ${c.name}: moving the view moves this camera`);
 }
-function hopOut() {
+function hopOut(back = false) {
   if (!hopped) return;
   const c = hopped;
+  stopOrbitGlide();
+  camera.position.copy(c.obj.position); camera.quaternion.copy(c.obj.quaternion); // exactly its view
   hopped = null;
-  camsVisible(!playing);
-  if (editorView) applyCam(editorView);
-  else {
+  if (back) {
     // step back so the camera you just left is in sight
-    const back = new THREE.Vector3(0, 0.6, 2.5).applyQuaternion(c.obj.quaternion).add(c.obj.position);
-    camera.position.copy(back);
+    const p = new THREE.Vector3(0, 0.6, 2.5).applyQuaternion(c.obj.quaternion).add(c.obj.position);
+    camera.position.copy(p);
     camera.lookAt(c.obj.position);
-    syncControllersFromCamera();
-  }
+  } else ghostCam = c; // keep looking through its view, so you can draw exactly what it sees
+  syncControllersFromCamera();
+  camsVisible(!playing);
   editorView = null;
   updateHopUI();
   reattachGizmo();
+  if (!back) toast(`Out of ${c.name}, still looking through its view. Lock view to draw without moving it.`);
+}
+/** Lock view: nothing moves the camera (orbit, fly, wheel, stick) until it's unlocked. */
+function setViewLock(on) {
+  viewLocked = on;
+  stopOrbitGlide();
+  orbit.enabled = !on && camMode === 'orbit' && !gizmo.dragging;
+  fly.dragging = false;
+  fly.vel?.set(0, 0, 0);
+  $('lockBtn').setAttribute('aria-pressed', String(on));
+  $('lockLabel').textContent = on ? 'View locked' : 'Lock view';
+  $('view').classList.toggle('view-locked', on);
+  updateFlyPad();
+  toast(on ? 'View locked: draw away, the camera stays put' : 'View unlocked');
 }
 /** A new camera where you're looking from; then step back so you can see it. */
 function newCameraHere() {
@@ -621,7 +646,7 @@ function showCamMenu(c, cx, cy) {
     return b;
   };
   camMenu.append(h('div', { class: 'cm-title' }, c.name));
-  const first = item(hopped === c ? 'Hop out' : 'Hop in', '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>', () => (hopped === c ? hopOut() : hopIn(c)));
+  const first = item(hopped === c ? 'Hop out (keep this view)' : 'Hop in', '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>', () => (hopped === c ? hopOut() : hopIn(c)));
   item('Move', '<path d="M12 2v20M2 12h20"/><path d="m9 5 3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3"/>', () => { selectCam(c); gizmo.setMode('translate'); toast('Drag the arrows to move ' + c.name); });
   item('Turn', '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>', () => { selectCam(c); gizmo.setMode('rotate'); toast('Drag the rings to turn ' + c.name); });
   item('Rename', '<path d="M15 4l5 5L9 20H4v-5z"/>', async () => { const n = await promptDlg('Rename camera', c.name); if (n) { c.name = n.slice(0, 30); updateHopUI(); saveSoon(); } });
@@ -863,7 +888,7 @@ function setCamMode(mode) {
   $('modeFly').setAttribute('aria-pressed', String(mode === 'fly'));
   $('flyHelp').style.display = mode === 'fly' ? '' : 'none';
   syncControllersFromCamera();
-  orbit.enabled = mode === 'orbit';
+  orbit.enabled = mode === 'orbit' && !viewLocked;
   if (mode === 'orbit') { flushOrbit(); orbit.update(); }
   fly.vel?.set(0, 0, 0);
   if (typeof updateFlyPad === 'function') updateFlyPad();
@@ -876,7 +901,7 @@ glc.addEventListener('pointerdown', (e) => {
   markInteract();
   if (downAt) return;               // ignore extra fingers
   downAt = { x: e.clientX, y: e.clientY, id: e.pointerId };
-  if (camMode !== 'fly' || gizmo.dragging) return;
+  if (camMode !== 'fly' || gizmo.dragging || viewLocked) return;
   fly.dragging = true; fly.lx = e.clientX; fly.ly = e.clientY; fly.pid = e.pointerId;
   glc.setPointerCapture(e.pointerId);
 });
@@ -900,7 +925,7 @@ glc.addEventListener('pointerup', flyUp);
 glc.addEventListener('pointercancel', flyUp);
 glc.addEventListener('wheel', (e) => {
   markInteract();
-  if (camMode !== 'fly') return;
+  if (camMode !== 'fly' || viewLocked) return;
   e.preventDefault();
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
   fly.vel.addScaledVector(fwd, -Math.sign(e.deltaY) * fly.speed * 0.9);
@@ -941,7 +966,7 @@ function buildTouchPad() {
 }
 const flyPad = buildTouchPad();
 function updateFlyPad() {
-  flyPad.classList.toggle('show', COARSE && camMode === 'fly' && tool === 'camera' && !playing);
+  flyPad.classList.toggle('show', COARSE && camMode === 'fly' && tool === 'camera' && !playing && !viewLocked);
 }
 
 const raycaster = new THREE.Raycaster();
@@ -984,7 +1009,7 @@ function pickModelAt(e) {
 }
 
 function updateFly(dt) {
-  if (camMode !== 'fly' || playing) { fly.vel.set(0, 0, 0); return; }
+  if (camMode !== 'fly' || playing || viewLocked) { fly.vel.set(0, 0, 0); return; }
   const k = isTyping() ? new Set() : fly.keys;
   const want = new THREE.Vector3();
   const fwd = new THREE.Vector3(-Math.sin(fly.yaw), 0, -Math.cos(fly.yaw));
@@ -2169,6 +2194,10 @@ const clock = new THREE.Clock();
 function frameLoop() {
   requestAnimationFrame(frameLoop);
   const dt = Math.min(0.1, clock.getDelta());
+  if (ghostCam && (!sceneCams.includes(ghostCam) || camera.position.distanceTo(ghostCam.obj.position) > 0.4 || camera.quaternion.angleTo(ghostCam.obj.quaternion) > 0.25)) {
+    ghostCam = null;
+    camsVisible(!playing);
+  }
   if (exporting) return;
 
   if (playing) {
@@ -3646,6 +3675,7 @@ $('modeOrbit').addEventListener('click', () => { setCamMode('orbit'); setTool('c
 $('modeFly').addEventListener('click', () => { setCamMode('fly'); setTool('camera'); });
 $('addFrameBtn').addEventListener('click', addFrameHere);
 $('hopBtn').addEventListener('click', toggleHop);
+$('lockBtn').addEventListener('click', () => setViewLock(!viewLocked));
 $('newCamBtn').addEventListener('click', newCameraHere);
 $('updateCamBtn').addEventListener('click', updateFrameCamera);
 $('playBtn').addEventListener('click', () => (playing ? stopPlay() : startPlay()));
