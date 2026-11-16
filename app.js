@@ -1054,6 +1054,18 @@ function sheetForView(frame, layerId, create, pt) {
   const cam = captureCam();
   const locked = isLocked(layerId);
   let s = frame.sheets.find((x) => x.layerId === layerId && (locked || (!x.xf && sameView(x.anchor, cam))));
+  // one drawing per layer: from a new angle, the layer's drawing swings round to face the camera
+  if (!s && create && proj.draw.one !== false) {
+    const mine = frame.sheets.filter((x) => x.layerId === layerId);
+    s = mine[mine.length - 1] || null;
+    if (s) {
+      s.reanchored = { anchor: s.anchor, xf: s.xf || null };
+      s.anchor = { ...cam, aspect: proj.W / proj.H, dist: depthAt(pt) };
+      s.xf = null;
+      if (s.mesh) placeSheet(s);
+      s.reanchored.to = s.anchor;
+    }
+  }
   if (!s && create) {
     s = newSheet(layerId, { ...cam, aspect: proj.W / proj.H, dist: depthAt(pt) });
     frame.sheets.push(s);
@@ -1410,7 +1422,7 @@ function artSection() {
     sel.sheets.some((s) => s.xf) ? h('button', { type: 'button', class: 'btn', onclick: artPutBack }, 'Put back') : null,
     h('button', { type: 'button', class: 'btn', onclick: artDelete }, 'Delete'),
     h('button', { type: 'button', class: 'btn primary', onclick: () => selectArt(null) }, 'Done')));
-  if (sel.sheets.some((s) => s.xf)) sect.append(h('p', { class: 'note', style: 'margin-top:8px' }, 'Moved drawings stay where you put them. Drawing again starts a new sheet, so you can keep adding to the layer.'));
+  if (sel.sheets.some((s) => s.xf)) sect.append(h('p', { class: 'note', style: 'margin-top:8px' }, 'Moved drawings stay where you put them. Drawing on this layer again from another angle brings the drawing round to face you.'));
   return sect;
 }
 
@@ -1789,13 +1801,22 @@ function layersChanged() {
   saveSoon();
 }
 
+/** If drawing just swung this sheet round to face the camera, returns how to undo / redo that. */
+function takeReanchor(s) {
+  const r = s.reanchored;
+  delete s.reanchored;
+  if (!r) return { undo() {}, redo() {} };
+  const set = (a, xf) => { s.anchor = a; s.xf = xf; if (s.mesh) placeSheet(s); };
+  return { undo: () => set(r.anchor, r.xf), redo: () => set(r.to, null) };
+}
 function pixelEdit(label, frame, layerId, fn, pt) {
   const s = sheetForView(frame, layerId, true, pt);
+  const re = takeReanchor(s);
   const c = s.canvas, ctx = c.getContext('2d');
   const before = ctx.getImageData(0, 0, c.width, c.height);
   fn(ctx, c);
   const after = ctx.getImageData(0, 0, c.width, c.height);
-  pushUndo(label, () => { ctx.putImageData(before, 0, 0); touchSheet(frame, s); }, () => { ctx.putImageData(after, 0, 0); touchSheet(frame, s); });
+  pushUndo(label, () => { ctx.putImageData(before, 0, 0); re.undo(); touchSheet(frame, s); }, () => { re.redo(); ctx.putImageData(after, 0, 0); touchSheet(frame, s); });
   touchSheet(frame, s);
 }
 
@@ -1956,6 +1977,7 @@ drawCanvas.addEventListener('pointerdown', (e) => {
   if (tool === 'fill') { floodFill(pt); return; }
   const frame = curFrame();
   const sheet = sheetForView(frame, proj.activeLayer, true, pt);
+  const reanchor = takeReanchor(sheet);
   const lc = sheet.canvas;
   const bctx = beforeCanvas.getContext('2d');
   bctx.clearRect(0, 0, proj.W, proj.H); bctx.drawImage(lc, 0, 0);
@@ -1967,7 +1989,7 @@ drawCanvas.addEventListener('pointerdown', (e) => {
     if (xi < 0 || yi < 0 || xi >= proj.W || yi >= proj.H) return null;
     return bctx.getImageData(xi, yi, 1, 1).data;
   };
-  stroke = { frame, sheet, layerId: proj.activeLayer, sx: pt.x, sy: pt.y, x0: pt.x, y0: pt.y, p0: p, last: { ...pt, p },
+  stroke = { frame, sheet, reanchor, layerId: proj.activeLayer, sx: pt.x, sy: pt.y, x0: pt.x, y0: pt.y, p0: p, last: { ...pt, p },
     straight: ruler.line || e.shiftKey, mirror: ruler.mirror, sample, opacity: activeOpacity(), blend: activeBlend() };
   newEngines(stroke);
   feed(stroke, pt.x, pt.y, p, e.timeStamp);
@@ -2002,8 +2024,9 @@ const endStroke = () => {
     const before = beforeCanvas.getContext('2d').getImageData(x, y, w, h);
     const after = ctx.getImageData(x, y, w, h);
     const f = s.frame;
-    pushUndo('stroke', () => { sh.canvas.getContext('2d').putImageData(before, x, y); touchSheet(f, sh); },
-      () => { sh.canvas.getContext('2d').putImageData(after, x, y); touchSheet(f, sh); });
+    const re = s.reanchor;
+    pushUndo('stroke', () => { sh.canvas.getContext('2d').putImageData(before, x, y); re.undo(); touchSheet(f, sh); },
+      () => { re.redo(); sh.canvas.getContext('2d').putImageData(after, x, y); touchSheet(f, sh); });
   }
   if (tool !== 'eraser') rememberColor(brush.color);
   touchSheet(s.frame, sh);
@@ -2567,7 +2590,10 @@ function drawDepthSection() {
   sect.append(chipRow('How drawings sit in the scene', [['front', 'Always in front'], ['behind', 'Can hide behind models']], d.front !== false ? 'front' : 'behind', (v) => { d.front = v === 'front'; markAllThumbs(); saveSoon(); renderLayersPane(); }));
   if (d.front === false) sect.append(h('p', { class: 'note', style: 'margin:-2px 0 10px' }, 'Models closer to the camera cover your drawing. Strokes drawn onto the ground or a model may sink into it.'));
   if (d.mode === 'fixed') sect.append(slider('Distance from camera', d.dist, 0.5, 80, 0.5, (v) => { d.dist = v; saveSoon(); }, (v) => v + ' m'));
-  sect.append(h('p', { class: 'note' }, 'Your drawings stay where you drew them in the 3D world, facing the camera you drew from. Move the camera to walk around them. Drawing again from a different view starts a new sheet, so earlier strokes keep their place. To move a drawing, click it with the Camera tool, or use the arrows button next to a layer.'));
+  sect.append(h('p', { class: 'note' }, d.one !== false
+    ? 'Each layer holds one drawing per frame. It stays in the 3D world, facing the camera you last drew from, so it looks right from there. Move the camera and draw again, and the drawing swings round to face you so you can keep adding to it. To move a drawing, click it with the Camera tool, or use the arrows button next to a layer.'
+    : 'Your drawings stay where you drew them in the 3D world, facing the camera you drew from. Drawing again from a different view starts a new drawing there, so earlier strokes keep their place. To move a drawing, click it with the Camera tool, or use the arrows button next to a layer.'));
+  sect.append(chipRow('Drawing from a new angle', [['one', 'One drawing that faces you'], ['many', 'New drawing in each view']], d.one !== false ? 'one' : 'many', (v) => { d.one = v === 'one'; saveSoon(); renderLayersPane(); }));
   const f = curFrame();
   const n = f ? f.sheets.filter((s) => s.layerId === proj.activeLayer).length : 0;
   if (n) sect.append(h('p', { class: 'note' }, `This frame has ${n} drawing sheet${n > 1 ? 's' : ''} on this layer.`));
