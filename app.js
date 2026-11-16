@@ -615,8 +615,10 @@ function setViewLock(on) {
   $('lockBtn').setAttribute('aria-pressed', String(on));
   $('lockLabel').textContent = on ? 'View locked' : 'Lock view';
   $('view').classList.toggle('view-locked', on);
+  $('zoomCtl').hidden = !on;
+  if (!on) zoomReset();
   updateFlyPad();
-  toast(on ? 'View locked: draw away, the camera stays put' : 'View unlocked');
+  toast(on ? 'View locked: draw away. Pinch or scroll to zoom in for detail.' : 'View unlocked');
 }
 /** A new camera where you're looking from; then step back so you can see it. */
 function newCameraHere() {
@@ -2058,6 +2060,110 @@ const endStroke = () => {
 };
 drawCanvas.addEventListener('pointerup', endStroke);
 drawCanvas.addEventListener('pointercancel', endStroke);
+/* ---------- zooming the picture while the view is locked
+   Like zooming into a flat image: the 3D camera doesn't move, the picture is just shown bigger.
+   Wheel or pinch to zoom, drag with two fingers / middle or right mouse (or one finger with the
+   Camera tool) to move around. */
+const zoom = { s: 1, x: 0, y: 0 };
+const ZOOM_MAX = 8;
+function applyZoom() {
+  const r = box.getBoundingClientRect();
+  zoom.s = Math.min(ZOOM_MAX, Math.max(1, zoom.s));
+  zoom.x = Math.min(0, Math.max(r.width * (1 - zoom.s), zoom.x));
+  zoom.y = Math.min(0, Math.max(r.height * (1 - zoom.s), zoom.y));
+  const t = zoom.s === 1 ? '' : `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.s})`;
+  drawCanvas.style.transformOrigin = '0 0'; drawCanvas.style.transform = t;
+  setZoomView(); // the 3D is rendered zoomed at full sharpness instead of being stretched
+  $('zoomPct').textContent = Math.round(zoom.s * 100) + '%';
+  box.classList.toggle('zoomed', zoom.s > 1);
+}
+/** Renders just the zoomed-in part of the camera's view (the camera itself doesn't move). */
+function setZoomView() {
+  if (zoom.s > 1 && !exporting) {
+    const w = boxSize.w, hh = boxSize.h;
+    camera.setViewOffset(w, hh, -zoom.x / zoom.s, -zoom.y / zoom.s, w / zoom.s, hh / zoom.s);
+  } else if (camera.view?.enabled) camera.clearViewOffset();
+  displayDirty = true;
+}
+function withoutZoom(fn) {
+  const was = camera.view?.enabled;
+  if (was) camera.clearViewOffset();
+  try { return fn(); } finally { if (was) setZoomView(); }
+}
+function zoomAt(clientX, clientY, s) {
+  const r = box.getBoundingClientRect();
+  const lx = clientX - r.left, ly = clientY - r.top;
+  const ns = Math.min(ZOOM_MAX, Math.max(1, s));
+  zoom.x = lx - (lx - zoom.x) * (ns / zoom.s);
+  zoom.y = ly - (ly - zoom.y) * (ns / zoom.s);
+  zoom.s = ns;
+  applyZoom();
+}
+function zoomBy(k) { const r = box.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, zoom.s * k); }
+function zoomReset() { zoom.s = 1; zoom.x = 0; zoom.y = 0; applyZoom(); }
+function panBy(dx, dy) { zoom.x += dx; zoom.y += dy; applyZoom(); }
+
+box.addEventListener('wheel', (e) => {
+  if (!viewLocked) return;
+  e.preventDefault(); e.stopPropagation();
+  zoomAt(e.clientX, e.clientY, zoom.s * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018)));
+}, { capture: true, passive: false });
+
+// fingers and mouse buttons for zooming and moving around
+const ptrs = new Map();
+let pinch = null, panPtr = null;
+function cancelStroke() {
+  if (!stroke) return;
+  const s = stroke; stroke = null;
+  s.reanchor?.undo();
+  strokeCanvas.getContext('2d').clearRect(0, 0, proj.W, proj.H);
+  displayDirty = true;
+}
+box.addEventListener('pointerdown', (e) => {
+  if (!viewLocked) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const mousePan = e.pointerType === 'mouse' && (e.button === 1 || e.button === 2);
+  const toolPan = tool === 'camera' && e.pointerType !== 'pen' && ptrs.size === 1 && zoom.s > 1;
+  if (ptrs.size === 2 && e.pointerType === 'touch') {
+    cancelStroke(); // a second finger means zoom, not draw
+    const [a, b] = [...ptrs.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, s: zoom.s };
+    panPtr = null;
+    e.stopPropagation(); e.preventDefault();
+  } else if (mousePan || toolPan) {
+    panPtr = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    try { box.setPointerCapture(e.pointerId); } catch { /* fine */ }
+    e.stopPropagation(); e.preventDefault();
+  }
+}, { capture: true });
+box.addEventListener('pointermove', (e) => {
+  if (!viewLocked || !ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    panBy(cx - pinch.cx, cy - pinch.cy);
+    zoomAt(cx, cy, pinch.s * (d / Math.max(1, pinch.d)));
+    pinch.cx = cx; pinch.cy = cy; pinch.s = zoom.s; pinch.d = d;
+    e.stopPropagation(); e.preventDefault();
+  } else if (panPtr && panPtr.id === e.pointerId) {
+    panBy(e.clientX - panPtr.x, e.clientY - panPtr.y);
+    panPtr.x = e.clientX; panPtr.y = e.clientY;
+    e.stopPropagation(); e.preventDefault();
+  }
+}, { capture: true });
+const ptrUp = (e) => {
+  ptrs.delete(e.pointerId);
+  const was = pinch || (panPtr && panPtr.id === e.pointerId);
+  if (ptrs.size < 2) pinch = null;
+  if (panPtr && panPtr.id === e.pointerId) panPtr = null;
+  if (was && viewLocked) e.stopPropagation();
+};
+box.addEventListener('pointerup', ptrUp, { capture: true });
+box.addEventListener('pointercancel', ptrUp, { capture: true });
+box.addEventListener('contextmenu', (e) => { if (viewLocked) e.preventDefault(); });
+window.addEventListener('resize', () => applyZoom());
+
 
 /** Draws this frame's sheets that were drawn from the current view (used by fill). */
 function compositeView(ctx, frame, onlyLayer = null) {
@@ -2184,6 +2290,7 @@ function layoutBox() {
   renderer.setSize(boxSize.w, boxSize.h, false);
   camera.aspect = aspect;
   camera.updateProjectionMatrix();
+  if (typeof setZoomView === 'function' && zoom.s > 1) applyZoom();
   displayDirty = true;
 }
 new ResizeObserver(layoutBox).observe(view);
@@ -2223,7 +2330,7 @@ function frameLoop() {
   renderDisplay();
   updateCamChanged();
   const f = curFrame();
-  if (f && f.thumbDirty && !stroke && !camDiffers(f.cam, captureCam())) drawThumb(f);
+  if (f && f.thumbDirty && !stroke && zoom.s === 1 && !camDiffers(f.cam, captureCam())) drawThumb(f);
 }
 
 let lastThumbAt = 0;
@@ -2241,7 +2348,7 @@ function backgroundThumb() {
   camera.position.fromArray(f.cam.p); camera.quaternion.fromArray(f.cam.q); camera.fov = f.cam.fov; camera.updateProjectionMatrix();
   setModelTimes(proj.frames.indexOf(f));
   syncSheets(proj.frames.indexOf(f), true);
-  renderer.render(scene, camera);
+  withoutZoom(() => renderer.render(scene, camera));
   drawThumb(f);
   camera.position.copy(pos); camera.quaternion.copy(q); camera.fov = fov; camera.updateProjectionMatrix();
   setModelTimes(proj.current);
@@ -3049,6 +3156,7 @@ function renderExportFrame(ctx, i) {
 
 function withExportRenderer(fn) {
   exporting = true;
+  if (camera.view?.enabled) camera.clearViewOffset();
   const keepGrid = grid.visible, keepGizmo = gizmo.object;
   grid.visible = false; gizmo.detach(); camsVisible(false);
   const prevRatio = renderer.getPixelRatio();
@@ -3060,6 +3168,7 @@ function withExportRenderer(fn) {
     renderer.setPixelRatio(prevRatio);
     layoutBox();
     exporting = false;
+    if (zoom.s > 1) applyZoom();
     camsVisible(true);
     goTo(proj.current);
   };
@@ -3643,6 +3752,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && selectedArt) { selectArt(null); return; }
   if (selectedArt && tool === 'camera' && camMode !== 'fly' && !gizmo.dragging && (k === 'q' || k === 'e')) { artSpinBy(k === 'q' ? -15 : 15); if (activeTab === 'Layers') renderLayersPane(); return; }
   if (selectedArt && tool === 'camera' && !gizmo.dragging && (k === 'r' || k === 'm' || k === 'z')) { gizmo.setMode(k === 'm' ? 'translate' : k === 'r' ? 'rotate' : 'scale'); if (activeTab === 'Layers') renderLayersPane(); return; }
+  if (viewLocked && (e.key === '+' || e.key === '=')) { zoomBy(1.4); return; }
+  if (viewLocked && (e.key === '-' || e.key === '_')) { zoomBy(1 / 1.4); return; }
+  if (viewLocked && e.key === '0') { zoomReset(); return; }
   if (k === 'h') { toggleHop(); return; }
   if (k === 'u') { if (!$('updateCamBtn').disabled) updateFrameCamera(); return; }
   if (k === 'b') { toggleTab('Brush'); return; }
@@ -3676,6 +3788,9 @@ $('modeFly').addEventListener('click', () => { setCamMode('fly'); setTool('camer
 $('addFrameBtn').addEventListener('click', addFrameHere);
 $('hopBtn').addEventListener('click', toggleHop);
 $('lockBtn').addEventListener('click', () => setViewLock(!viewLocked));
+$('zoomIn').addEventListener('click', () => zoomBy(1.4));
+$('zoomOut').addEventListener('click', () => zoomBy(1 / 1.4));
+$('zoomFit').addEventListener('click', zoomReset);
 $('newCamBtn').addEventListener('click', newCameraHere);
 $('updateCamBtn').addEventListener('click', updateFrameCamera);
 $('playBtn').addEventListener('click', () => (playing ? stopPlay() : startPlay()));
