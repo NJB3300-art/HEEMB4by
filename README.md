@@ -12,7 +12,7 @@
 - Drawings live in the 3D world where you drew them; click them to move, resize, spin (slider, 15°/90° buttons, Q/E keys) or flip them, or lock a layer to the camera frame.
 - Import 3D models: GLB/glTF, FBX, OBJ, STL, PLY, DAE, 3MF, 3DS, USDZ and more.
 - Import photos (PNG, JPG…), videos (MP4, MOV) and sound (WAV, MP3…) as their own layers; videos and sounds play with your frames.
-- Move around with orbit or walk/fly controls, place cameras and hop inside them, add lights, set the sky and time of day.
+- Move around with orbit or walk/fly controls, place cameras and hop inside them, add lights, set the sky, clouds and time of day.
 - Frames with onion skin and in-betweens; Export saves a frame as PNG or the whole animation as a video with sound.
 - Make an account (username + password) and keep up to 10 projects in **projectsbby<3**. Accounts and projects are stored in your browser on this device.
 - Frutiger Aero look; the bottom-left Background button switches to black mode (purple bubbles) or your own background picture; full-screen/landscape mode for phones.

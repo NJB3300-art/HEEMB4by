@@ -95,6 +95,11 @@ scene.add(gizmo);
 RectAreaLightUniformsLib.init();
 const sky = new Sky();
 sky.scale.setScalar(1500);
+// the stock sky is so bright at midday it turns white; a gain keeps it blue (and lets clouds show)
+sky.material.uniforms.skyGain = { value: 1 };
+sky.material.fragmentShader = sky.material.fragmentShader
+  .replace('void main() {', 'uniform float skyGain;\nvoid main() {')
+  .replace('gl_FragColor = vec4( retColor, 1.0 );', 'gl_FragColor = vec4( retColor * skyGain, 1.0 );');
 scene.add(sky);
 
 const stars = (() => {
@@ -116,7 +121,98 @@ scene.add(moonLight, moonLight.target);
 const moonDisc = new THREE.Mesh(new THREE.SphereGeometry(14, 24, 16), new THREE.MeshBasicMaterial({ color: '#eef1ff', toneMapped: false, fog: false }));
 scene.add(moonDisc);
 
-const ENV_DEFAULTS = { sky: '#bcd4f6', skyMode: 'dynamic', skyTop: '#4a7fd6', skyBottom: '#dcecff', time: 14, haze: 3, fog: 0, ambient: 1, sunTint: '#ffffff', lapse: false, lapseFrom: 6, lapseTo: 21, light: 1, groundColor: '#9fb78a', ground: true, grid: true };
+/* ---------- clouds: a sunlit cloud layer high above, drifting with the frames */
+const CLOUD_COVER = { none: 0, few: 0.4, some: 0.52, lots: 0.66, overcast: 0.92 };
+const clouds = new THREE.Mesh(
+  new THREE.PlaneGeometry(4200, 4200, 1, 1).rotateX(Math.PI / 2),
+  new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    uniforms: {
+      uCover: { value: 0.5 }, uT: { value: 0 }, uWind: { value: new THREE.Vector2(8, 3) },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uLit: { value: new THREE.Color(1, 1, 1) }, uShade: { value: new THREE.Color(0.6, 0.65, 0.72) },
+      uGlow: { value: new THREE.Color(1, 0.9, 0.8) }, uCamPos: { value: new THREE.Vector3() }, uOpacity: { value: 1 },
+    },
+    vertexShader: `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: `
+      uniform float uCover, uT, uOpacity;
+      uniform vec2 uWind;
+      uniform vec3 uSunDir, uLit, uShade, uGlow, uCamPos;
+      varying vec3 vWorld;
+      float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+        for (int i = 0; i < 6; i++) { v += a * noise(p); p = m * p; a *= 0.5; }
+        return v;
+      }
+      float density(vec2 p) {
+        float big = fbm(p * 0.32 + vec2(7.3, 2.1));          // where the cloud banks are
+        float detail = fbm(p + vec2(big * 1.3));              // puffy, billowing edges
+        float n = big * 0.62 + detail * 0.58;
+        float lo = 1.02 - uCover * 0.95;
+        return smoothstep(lo, lo + 0.17, n);
+      }
+      void main() {
+        vec2 p = (vWorld.xz + uWind * uT) * 0.0021;
+        float d = density(p);
+        if (d < 0.004) discard;
+        // self-shadowing: look a little way toward the sun through the cloud
+        vec2 toSun = normalize(uSunDir.xz + vec2(1e-4)) * 0.045;
+        float d1 = density(p + toSun), d2 = density(p + toSun * 2.2);
+        float light = clamp(1.0 - (d1 * 0.65 + d2 * 0.45) * 0.9 + (1.0 - d) * 0.35, 0.0, 1.0);
+        light = mix(light, 1.0, max(0.0, uSunDir.y) * 0.25);
+        vec3 col = mix(uShade, uLit, light);
+        col *= 1.0 - d * 0.26;                                // thick middles are a bit darker
+        // bright silver linings when looking toward the sun
+        vec3 v = normalize(vWorld - uCamPos);
+        float toward = pow(max(dot(v, normalize(uSunDir)), 0.0), 8.0);
+        col += uGlow * toward * (1.0 - d) * 1.2;
+        // thin out toward the horizon so the layer melts into the sky
+        float dist = length(vWorld.xz - uCamPos.xz);
+        float fade = 1.0 - smoothstep(950.0, 1850.0, dist);
+        float a = smoothstep(0.0, 0.32, d) * fade * uOpacity;
+        gl_FragColor = vec4(col, a);
+        #include <colorspace_fragment>
+      }`,
+  })
+);
+clouds.renderOrder = -1;
+clouds.frustumCulled = false;
+clouds.onBeforeRender = (r, sc, cam) => {
+  clouds.position.set(cam.position.x, cam.position.y + 260, cam.position.z);
+  clouds.updateMatrixWorld();
+  clouds.material.uniforms.uCamPos.value.copy(cam.position);
+};
+scene.add(clouds);
+/** Colors, cover and wind for the clouds at this time of day. */
+function updateClouds(e, sunDir, dayK, goldK, nightK) {
+  const cover = CLOUD_COVER[e.clouds] ?? 0;
+  clouds.visible = cover > 0;
+  const u = clouds.material.uniforms;
+  u.uCover.value = cover;
+  u.uSunDir.value.copy(sunDir);
+  const lit = new THREE.Color(0.17, 0.19, 0.27).lerp(new THREE.Color(1, 1, 1), dayK).lerp(new THREE.Color(1.0, 0.68, 0.48), goldK * 0.85);
+  const shade = new THREE.Color(0.035, 0.04, 0.065).lerp(new THREE.Color(0.47, 0.52, 0.61), dayK).lerp(new THREE.Color(0.5, 0.36, 0.45), goldK * 0.75);
+  if (cover > 0.8) { lit.lerp(new THREE.Color(0.78, 0.8, 0.84).multiplyScalar(0.15 + 0.85 * dayK), 0.55); shade.multiplyScalar(0.85); }
+  const k = Math.min(1.4, 0.6 + 0.4 * e.light) * (1 + 0.12 * dayK * (1 - goldK));
+  u.uLit.value.copy(lit.multiplyScalar(k));
+  u.uShade.value.copy(shade.multiplyScalar(k));
+  u.uGlow.value.set(1, 0.92, 0.8).lerp(new THREE.Color(1, 0.6, 0.35), goldK).multiplyScalar(dayK * 0.9 + 0.05);
+  const ang = THREE.MathUtils.degToRad(e.windDir ?? 35);
+  u.uWind.value.set(Math.cos(ang), Math.sin(ang)).multiplyScalar((e.wind ?? 1) * 10);
+}
+
+const ENV_DEFAULTS = { sky: '#bcd4f6', skyMode: 'dynamic', skyTop: '#4a7fd6', skyBottom: '#dcecff', time: 14, haze: 3, fog: 0, ambient: 1, sunTint: '#ffffff', lapse: false, lapseFrom: 6, lapseTo: 21, light: 1, groundColor: '#9fb78a', ground: true, grid: true, clouds: 'some', wind: 1, windDir: 35 };
 const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 let gradKey = '', gradTex = null, lastEnvK = -1;
 
@@ -161,7 +257,8 @@ function applyEnv(timeOverride) {
 
   sun.position.copy(sunDir).multiplyScalar(40);
   sun.color.set('#ffffff').lerp(new THREE.Color('#ff9a52'), goldK * 0.85).multiply(new THREE.Color(e.sunTint));
-  sun.intensity = 2.6 * e.light * sunUp;
+  const cloudDim = 1 - 0.75 * smoothstep(0.55, 0.92, CLOUD_COVER[e.clouds] ?? 0);
+  sun.intensity = 2.6 * e.light * sunUp * cloudDim;
   sun.castShadow = sunUp > 0.05;
 
   const moonDir = sunDir.clone().negate();
@@ -172,18 +269,19 @@ function applyEnv(timeOverride) {
 
   hemi.color.set('#20283f').lerp(new THREE.Color('#cfe2ff'), dayK).lerp(new THREE.Color('#ffc59a'), goldK * 0.4);
   hemi.groundColor.set('#1c1a22').lerp(new THREE.Color('#6b7a55'), dayK);
-  hemi.intensity = (0.18 + 0.5 * dayK) * e.ambient;
+  hemi.intensity = (0.18 + 0.5 * dayK) * e.ambient * (1 + (1 - cloudDim) * 0.5);
   renderer.toneMappingExposure = 0.6 + 0.45 * dayK;
 
   const dyn = e.skyMode === 'dynamic';
   sky.visible = dyn;
   if (dyn) {
     const u = sky.material.uniforms;
-    u.turbidity.value = e.haze;
-    u.rayleigh.value = 1.2 + goldK * 1.5;
+    u.turbidity.value = e.haze * (1 - 0.35 * dayK * (1 - goldK));
+    u.rayleigh.value = 1.2 + dayK * (1 - goldK) * 2.0 + goldK * 1.5; // deeper blue at midday, so clouds stand out
     u.mieCoefficient.value = 0.004 + e.haze * 0.0004;
     u.mieDirectionalG.value = 0.8;
     u.sunPosition.value.copy(sunDir);
+    u.skyGain.value = 1 - 0.68 * dayK * (1 - goldK * 0.75);
     scene.background = new THREE.Color('#05060c');
   } else if (e.skyMode === 'gradient') {
     const key = e.skyTop + e.skyBottom;
@@ -206,6 +304,7 @@ function applyEnv(timeOverride) {
   ground.visible = e.ground;
   ground.material.color.set(e.groundColor);
   grid.visible = e.grid;
+  updateClouds(e, sunDir, dayK, goldK, nightK);
 
   // reflections from the studio environment dim at night
   const envK = 0.15 + 0.85 * dayK;
@@ -1003,6 +1102,7 @@ function sheetMesh(s) {
 }
 /** Shows the sheets for one frame (plus onion-skin neighbours) and hides the rest. */
 function syncSheets(idx = proj.current, forExport = false) {
+  clouds.material.uniforms.uT.value = idx / Math.max(1, proj.fps);
   for (const m of sheetGroup.children) m.visible = false;
   const show = (f, alpha) => {
     if (!f) return;
@@ -2616,6 +2716,12 @@ function skySection() {
     s.append(slider('First frame', e.lapseFrom, 0, 48, 0.1, (v) => { e.lapseFrom = v; envChanged(); }, fmtClock));
     s.append(slider('Last frame', e.lapseTo, 0, 48, 0.1, (v) => { e.lapseTo = v; envChanged(); }, fmtClock));
     s.append(h('p', { class: 'note' }, 'Each frame gets its own time, from the first to the last. Go past midnight to run into the next day.'));
+  }
+  s.append(chipRow('Clouds', [['none', 'None'], ['few', 'A few'], ['some', 'Some'], ['lots', 'Lots'], ['overcast', 'Overcast']], e.clouds || 'none', (v) => { e.clouds = v; envChanged(true); }));
+  if ((CLOUD_COVER[e.clouds] ?? 0) > 0) {
+    s.append(slider('Wind', e.wind ?? 1, 0, 6, 0.05, (v) => { e.wind = v; envChanged(); }, (v) => (v < 0.05 ? 'still' : `${Math.round(v * 10)} m/s`)));
+    s.append(slider('Wind direction', e.windDir ?? 35, 0, 360, 1, (v) => { e.windDir = v; envChanged(); }, (v) => `${Math.round(v)}°`));
+    s.append(h('p', { class: 'note', style: 'margin:-2px 0 10px' }, 'Clouds drift with your frames, so they move when you play or export.'));
   }
   if (e.skyMode === 'dynamic') s.append(slider('Haze', e.haze, 1, 20, 0.1, (v) => { e.haze = v; envChanged(); }, (v) => v.toFixed(1)));
   if (e.skyMode === 'gradient') {
