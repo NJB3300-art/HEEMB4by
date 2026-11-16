@@ -3385,7 +3385,7 @@ function freshProject(opts = {}) {
 async function newProjectDialog() {
   await saveNow();
   if (!(await newProjectAllowed())) return;
-  const sizes = [['Wide', 960, 540], ['Wide HD', 1280, 720], ['Square', 720, 720], ['Tall (phone)', 540, 960], ['Classic 4:3', 960, 720]];
+  const sizes = [['Wide', 960, 540], ['Wide HD', 1280, 720], ['Full HD (sharpest)', 1920, 1080], ['Square', 720, 720], ['Tall (phone)', 540, 960], ['Classic 4:3', 960, 720]];
   let pick = 0, keepScene = false;
   openDlg((d) => {
     const nameIn = h('input', { class: 'proj', style: 'width:100%;max-width:none', 'aria-label': 'Project name', autofocus: true }); nameIn.value = 'My animation';
